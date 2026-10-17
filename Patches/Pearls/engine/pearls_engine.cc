@@ -27,7 +27,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
+#include <new>
 
 namespace pearls {
 
@@ -132,17 +134,30 @@ size_t Engine::MaxBufferFrames() {
 }
 
 Engine::~Engine() {
-  delete processor_;
-  delete synth_;
-  delete[] delay_buffer_;
-  delete[] reverb_buffer_;
+  if (processor_) processor_->~Processor();
+  if (synth_) synth_->~Synth();
+  free(processor_);
+  free(synth_);
+  free(delay_buffer_);
+  free(reverb_buffer_);
 }
 
 bool Engine::Init() {
-  delay_buffer_ = new uint8_t[3 * kDelayRegionSize];
-  reverb_buffer_ = new uint16_t[kReverbBufferSize];
-  processor_ = new Processor;
-  synth_ = new Synth;
+  // malloc and placement new, so that a failed allocation (possible on the
+  // Lich) is reported instead of assumed away.
+  delay_buffer_ = static_cast<uint8_t*>(malloc(3 * kDelayRegionSize));
+  reverb_buffer_ = static_cast<uint16_t*>(
+      malloc(kReverbBufferSize * sizeof(uint16_t)));
+  void* processor_memory = malloc(sizeof(Processor));
+  void* synth_memory = malloc(sizeof(Synth));
+  if (!delay_buffer_ || !reverb_buffer_ || !processor_memory ||
+      !synth_memory) {
+    free(processor_memory);
+    free(synth_memory);
+    return false;
+  }
+  processor_ = new (processor_memory) Processor;
+  synth_ = new (synth_memory) Synth;
   memset(delay_buffer_, 0, 3 * kDelayRegionSize);
   memset(reverb_buffer_, 0, kReverbBufferSize * sizeof(uint16_t));
 
@@ -445,13 +460,14 @@ void Engine::Process(
   controls_ = controls;
   ContinueTransfer();
   for (size_t i = 0; i < size; ++i) {
+    // Inputs first: the output may be the input buffer (in-place hosts).
+    in_fifo_l_[fifo_index_] = in_l ? in_l[i] : 0.0f;
+    in_fifo_r_[fifo_index_] = in_r ? in_r[i] : 0.0f;
     out_l[i] = out_fifo_l_[fifo_index_];
     out_r[i] = out_fifo_r_[fifo_index_];
     if (gate_out) {
       gate_out[i] = gate_fifo_[fifo_index_] ? 1 : 0;
     }
-    in_fifo_l_[fifo_index_] = in_l ? in_l[i] : 0.0f;
-    in_fifo_r_[fifo_index_] = in_r ? in_r[i] : 0.0f;
     freeze_fifo_[fifo_index_] = freeze_gate ? freeze_gate[i] != 0 : false;
     seed_fifo_[fifo_index_] = seed_gate ? seed_gate[i] != 0 : false;
     if (++fifo_index_ == kBlockSize) {

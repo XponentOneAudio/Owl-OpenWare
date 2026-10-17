@@ -373,6 +373,9 @@ const int16_t* lookup_table_i16_table[] = {
 const int8_t* lookup_table_i8_table[] = {
 };
 
+#ifdef BEADS_EXTERNAL_WAVETABLES
+const int16_t* wav_integrated_waves = NULL;
+#else
 const int16_t wav_integrated_waves[] = {
   -20784, -20822, -20847, -20860,
   -20860, -20847, -20822, -20784,
@@ -12860,6 +12863,7 @@ const int16_t wav_integrated_waves[] = {
 const int16_t* wavetables_table[] = {
   wav_integrated_waves,
 };
+#endif  // BEADS_EXTERNAL_WAVETABLES
 
 
 }  // namespace beads

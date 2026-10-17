@@ -48,10 +48,15 @@ extern const int16_t* lookup_table_i16_table[];
 
 extern const int8_t* lookup_table_i8_table[];
 
-extern const int16_t* wavetables_table[];
-
 extern const float lut_sine[];
+#ifdef BEADS_EXTERNAL_WAVETABLES
+// Lich port: the wavetables (100 kB) don't fit in the patch; the host loads
+// them and points this at them (NULL: no wavetable synth).
+extern const int16_t* wav_integrated_waves;
+#else
+extern const int16_t* wavetables_table[];
 extern const int16_t wav_integrated_waves[];
+#endif  // BEADS_EXTERNAL_WAVETABLES
 #define LUT_SINE 0
 #define LUT_SINE_SIZE 1281
 #define WAV_INTEGRATED_WAVES 0

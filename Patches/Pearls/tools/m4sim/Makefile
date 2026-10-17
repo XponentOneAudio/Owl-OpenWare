@@ -5,6 +5,8 @@
 #                 arm-none-eabi-gcc)
 #   make run ONLY=11 PROFILE=1   one configuration, with a function profile
 #   make run MAX_GRAINS=8        with a grain voice limit
+#   TOOLROOT=<dir>/              the toolchain the patch is built with (gcc
+#                                10; gcc 13 refuses -ffreestanding C++)
 #
 # The cycle model (m4cycles.c, m4costs.py) applies Cortex-M4 instruction
 # timings and the Lich's SDRAM timings; see the comments there. Expect it to
@@ -12,21 +14,19 @@
 
 ROOT = ../..
 QEMU_VERSION = v8.2.2
-CXX = arm-none-eabi-g++
-CC = arm-none-eabi-gcc
+TOOLROOT ?=
+CXX = $(TOOLROOT)arm-none-eabi-g++
+CC = $(TOOLROOT)arm-none-eabi-gcc
 ARCH = -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16 -fsingle-precision-constant
 DEFS = $(if $(ONLY),-DONLY=$(ONLY)) $(if $(MAX_GRAINS),-DMAX_GRAINS=$(MAX_GRAINS)) $(if $(REVERB),-DREVERB=$(REVERB))
-FLAGS = $(ARCH) -O3 -ffast-math -DPEARLS_RESAMPLER_TAPS=96 -DTEST -DBEADS_NO_HARDWARE_24K -include cstdio \
-	-I$(ROOT) -I$(ROOT)/third_party/eurorack -ffunction-sections -fdata-sections $(DEFS)
+# The flags OwlProgram compiles patches with (compile.mk), minus -fpic/-fpie.
+FLAGS = $(ARCH) -O3 -ffast-math -DNDEBUG -mtune=cortex-m4 -nostdlib -fno-builtin \
+	-ffreestanding -mno-unaligned-access -fno-omit-frame-pointer -flto \
+	-fdata-sections -ffunction-sections \
+	-include lich_config.h -I$(ROOT)/owl -I$(ROOT) -I$(ROOT)/third_party/eurorack $(DEFS)
 CXXFLAGS = $(FLAGS) $(if $(DEBUG),-g) -fno-rtti -fno-exceptions -std=gnu++14 -Wno-psabi
 BUILD = $(ROOT)/build/m4sim
-SRC = $(addprefix $(ROOT)/, \
-	third_party/eurorack/beads/dsp/processor.cc third_party/eurorack/beads/dsp/synth.cc \
-	third_party/eurorack/beads/dsp/mu_law.cc third_party/eurorack/beads/dsp/delay_clock.cc \
-	third_party/eurorack/beads/dsp/delay_controller.cc \
-	third_party/eurorack/beads/dsp/trigger_generator.cc third_party/eurorack/beads/resources.cc \
-	third_party/eurorack/stmlib/utils/random.cc third_party/eurorack/stmlib/dsp/units.cc \
-	engine/pearls_engine.cc engine/gain_control.cc) bench.cc
+SRC = bench_dsp.cpp bench.cc
 
 .PHONY: plugin run bench FORCE
 plugin: $(BUILD)/m4cycles.so
@@ -43,7 +43,8 @@ $(BUILD)/bench.elf: FORCE
 	mkdir -p $(BUILD)
 	$(CC) $(ARCH) -O2 -c startup.c -o $(BUILD)/startup.o
 	$(CXX) $(CXXFLAGS) -T mps2.ld -nostartfiles --specs=rdimon.specs -Wl,--gc-sections \
-		-o $@ $(BUILD)/startup.o $(SRC) -lm
+		-o $@ $(BUILD)/startup.o $(SRC) -Wl,--start-group -lc -lm -lgcc -lrdimon -Wl,--end-group
+	@arm-none-eabi-nm $@ | grep -q wav_integrated_waves || true
 
 run: plugin bench
 	./run.sh $(BUILD) $(if $(PROFILE),profile=1)

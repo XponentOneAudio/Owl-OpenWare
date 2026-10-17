@@ -7,6 +7,8 @@ MEMORY {
   EXT (rw)   : ORIGIN = 0x00100000, LENGTH = 3M
 }
 SECTIONS {
+  /* The wavetables live in SDRAM on the Lich (loaded from a resource). */
+  .extrodata : { *(.rodata.*wav_integrated_waves*) } > EXT
   .text : {
     KEEP(*(.isr_vector))
     *(.text*) *(.rodata*)
@@ -16,11 +18,11 @@ SECTIONS {
     __init_array_start = .; KEEP(*(SORT(.init_array.*))) KEEP(*(.init_array*)) __init_array_end = .;
     __fini_array_start = .; KEEP(*(.fini_array*)) __fini_array_end = .;
   } > CODE
-  .ARM.exidx : { *(.ARM.exidx*) } > CODE
+  .ARM.exidx : { __exidx_start = .; *(.ARM.exidx*) __exidx_end = .; } > CODE
   .data : { *(.data*) } > RAM
   .bss (NOLOAD) : { __bss_start__ = .; *(.bss*) *(COMMON) . = ALIGN(8); __bss_end__ = .; } > RAM
   . = ALIGN(8);
   end = .; _end = .;
   __stack_top = ORIGIN(RAM) + LENGTH(RAM);
-  __ext_start = ORIGIN(EXT);
+  __ext_start = ORIGIN(EXT) + SIZEOF(.extrodata);
 }

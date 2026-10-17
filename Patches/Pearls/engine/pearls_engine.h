@@ -164,6 +164,10 @@ class Engine {
 
   const Status& status() const { return status_; }
 
+  // Locks or unlocks the grain generator directly (Beads: a 4 s SEED press,
+  // or SEED + FREEZE), for hosts whose SEED button is also the seed input.
+  void set_seed_locked(bool locked) { seed_locked_ = locked; }
+
   // Grain voices, 4..32 (Beads: 32). Lowered by hosts with less CPU than
   // Beads' (the Lich patch adjusts it from its measured CPU load).
   void set_max_grains(int max_grains) { max_grains_ = max_grains; }

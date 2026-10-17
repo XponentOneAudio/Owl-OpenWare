@@ -36,6 +36,10 @@
 #include <cmath>
 #include <cstddef>
 
+#ifndef PEARLS_FILTER_DESIGN_REAL
+#define PEARLS_FILTER_DESIGN_REAL double
+#endif
+
 namespace pearls {
 
 // Number of filter taps at the intermediate rate. Must be divisible by L.
@@ -50,20 +54,27 @@ class RationalResampler {
   ~RationalResampler() { }
 
   // cutoff: normalised to the intermediate rate (cycles/sample, < 0.5).
-  void Init(double cutoff, double kaiser_beta) {
+  // The filter is designed in PEARLS_FILTER_DESIGN_REAL (double; the Lich
+  // uses float, which keeps double-precision libm out of its patch).
+  void Init(double cutoff_d, double kaiser_beta_d) {
+    typedef PEARLS_FILTER_DESIGN_REAL Real;
     static_assert(num_taps % L == 0, "num_taps must be divisible by L");
-    const double center = 0.5 * (num_taps - 1);
-    const double i0_beta = BesselI0(kaiser_beta);
+    const Real pi = Real(3.14159265358979323846);
+    const Real cutoff = Real(cutoff_d);
+    const Real kaiser_beta = Real(kaiser_beta_d);
+    const Real center = Real(0.5) * Real(num_taps - 1);
+    const Real i0_beta = BesselI0(kaiser_beta);
     for (int i = 0; i < num_taps; ++i) {
-      const double x = i - center;
-      const double sinc = x == 0.0
-          ? 2.0 * cutoff
-          : std::sin(2.0 * M_PI * cutoff * x) / (M_PI * x);
-      const double r = x / center;
-      const double window = BesselI0(
-          kaiser_beta * std::sqrt(std::max<double>(0.0, 1.0 - r * r))) / i0_beta;
+      const Real x = Real(i) - center;
+      const Real sinc = x == Real(0)
+          ? Real(2) * cutoff
+          : std::sin(Real(2) * pi * cutoff * x) / (pi * x);
+      const Real r = x / center;
+      const Real window = BesselI0(
+          kaiser_beta * std::sqrt(std::max<Real>(Real(0), Real(1) - r * r))) /
+          i0_beta;
       // Gain of L compensates for the zero-stuffing.
-      const double h = sinc * window * L;
+      const Real h = sinc * window * Real(L);
       // Store per phase, reversed, for a straight dot product.
       const int phase = i % L;
       const int q = i / L;
@@ -119,14 +130,15 @@ class RationalResampler {
   }
 
  private:
-  static double BesselI0(double x) {
-    double sum = 1.0;
-    double term = 1.0;
-    const double y = x * x / 4.0;
+  static PEARLS_FILTER_DESIGN_REAL BesselI0(PEARLS_FILTER_DESIGN_REAL x) {
+    typedef PEARLS_FILTER_DESIGN_REAL Real;
+    Real sum = 1;
+    Real term = 1;
+    const Real y = x * x / Real(4);
     for (int k = 1; k < 64; ++k) {
-      term *= y / (double(k) * double(k));
+      term *= y / (Real(k) * Real(k));
       sum += term;
-      if (term < 1e-12 * sum) {
+      if (term < Real(1e-12) * sum) {
         break;
       }
     }

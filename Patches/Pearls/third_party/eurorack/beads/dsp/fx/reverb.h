@@ -178,7 +178,7 @@ class Reverb {
       ++in_out;
     }
     silent_samples_ = tail_peak < 3e-5f
-        ? std::min(silent_samples_ + block_size, kSilentSamples)
+        ? std::min(silent_samples_ + block_size, int(kSilentSamples))
         : 0;
   }
   
@@ -213,7 +213,7 @@ class Reverb {
   float lp_2_;
 
   // Lich port: tail silence detection.
-  static const int kSilentSamples = 48000;
+  enum { kSilentSamples = 48000 };
   int silent_samples_;
   
   DISALLOW_COPY_AND_ASSIGN(Reverb);
