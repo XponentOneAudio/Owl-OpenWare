@@ -80,6 +80,31 @@ class PlayHead {
     return phase < pw ? phase * slope_up : 1.0f - (phase - pw) * slope_down;
   }
 
+  // Lich port: as Render(tap, shape, false), with the triangle's pulse width
+  // and slopes computed once per sample for all heads.
+  inline void Render(DelayTap* tap, float shape, float pw, float slope_up,
+                     float slope_down) {
+    if (done()) {
+      tap->delay = 0;
+      tap->gain = 0.0f;
+      return;
+    }
+    float envelope;
+    if (shape < 0.2f) {
+      const float square = std::min(100.0f * Triangle(phase_, 0.5f), 1.0f);
+      const float triangle = Triangle(phase_, 0.001f);
+      envelope = square + (triangle - square) * shape * 5.0f;
+    } else {
+      envelope = phase_ < pw
+          ? phase_ * slope_up
+          : 1.0f - (phase_ - pw) * slope_down;
+    }
+    tap->delay = int32_t(start_ + remaining_) << 10;
+    tap->gain = gain_ * envelope;
+    --remaining_;
+    phase_ += phase_increment_;
+  }
+
   inline void Render(DelayTap* tap, float shape, bool slave) {
     if (done()) {
       tap->delay = 0;
@@ -139,6 +164,45 @@ class TapEnvelope {
   }
   
   inline float phase() const { return phase_; }
+
+  // Lich port: the envelope shape, computed once per sample for all taps
+  // (Render(shape) computes the same values for each tap).
+  struct Shape {
+    float shape;
+    float pw;
+    float slope_up;
+    float slope_down;
+  };
+
+  static inline Shape ComputeShape(float shape) {
+    const float pw[6] = {
+      0.0f, 0.001f, 0.01f, 0.5f, 0.75f, 0.999f
+    };
+    Shape s;
+    s.shape = shape;
+    s.pw = shape < 0.2f ? pw[1] : stmlib::Interpolate(pw, shape, 5.0f);
+    s.slope_up = 1.0f / s.pw;
+    s.slope_down = 1.0f / (1.0f - s.pw);
+    return s;
+  }
+
+  inline float Render(const Shape& s) {
+    const float triangle = phase_ < s.pw
+        ? phase_ * s.slope_up
+        : 1.0f - (phase_ - s.pw) * s.slope_down;
+    float envelope;
+    if (s.shape < 0.2f) {
+      const float square = 1.0f;
+      envelope = square + (triangle - square) * s.shape * 5.0f;
+    } else {
+      envelope = triangle;
+    }
+    phase_ += phase_increment_;
+    if (phase_ >= 1.0f) {
+      phase_ -= 1.0f;
+    }
+    return envelope;
+  }
   
   inline float Render(float shape) {
     float envelope;

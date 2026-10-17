@@ -15,10 +15,10 @@ QEMU_VERSION = v8.2.2
 CXX = arm-none-eabi-g++
 CC = arm-none-eabi-gcc
 ARCH = -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16 -fsingle-precision-constant
-DEFS = $(if $(ONLY),-DONLY=$(ONLY)) $(if $(MAX_GRAINS),-DMAX_GRAINS=$(MAX_GRAINS))
-FLAGS = $(ARCH) -O3 -ffast-math -DTEST -DBEADS_NO_HARDWARE_24K -include cstdio \
+DEFS = $(if $(ONLY),-DONLY=$(ONLY)) $(if $(MAX_GRAINS),-DMAX_GRAINS=$(MAX_GRAINS)) $(if $(REVERB),-DREVERB=$(REVERB))
+FLAGS = $(ARCH) -O3 -ffast-math -DPEARLS_RESAMPLER_TAPS=96 -DTEST -DBEADS_NO_HARDWARE_24K -include cstdio \
 	-I$(ROOT) -I$(ROOT)/third_party/eurorack -ffunction-sections -fdata-sections $(DEFS)
-CXXFLAGS = $(FLAGS) -fno-rtti -fno-exceptions -std=gnu++14 -Wno-psabi
+CXXFLAGS = $(FLAGS) $(if $(DEBUG),-g) -fno-rtti -fno-exceptions -std=gnu++14 -Wno-psabi
 BUILD = $(ROOT)/build/m4sim
 SRC = $(addprefix $(ROOT)/, \
 	third_party/eurorack/beads/dsp/processor.cc third_party/eurorack/beads/dsp/synth.cc \

@@ -63,6 +63,7 @@ struct Config {
   float density;
   float randomness;
   float size;
+  bool freeze;
 };
 
 static void Run(int phase, const Config& cfg) {
@@ -85,22 +86,28 @@ static void Run(int phase, const Config& cfg) {
   c.pitch = 7.0f;
   c.feedback = 0.5f;
   c.dry_wet = 0.8f;
+#ifdef REVERB
+  c.reverb = REVERB;
+#else
   c.reverb = 0.6f;
+#endif
   c.gain = 40;  // manual gain: skip the automatic gain measurement
 
   float out_l[kBlock], out_r[kBlock];
   uint8_t gate[kBlock];
+  uint8_t freeze[kBlock];
+  std::fill(&freeze[0], &freeze[kBlock], cfg.freeze ? 1 : 0);
   const size_t total = size_t(kSeconds * Engine::kSampleRate);
   // Let the configuration fade in and the buffer fill (not measured).
   size_t pos = 0;
   for (size_t n = 0; n < 96000; n += kBlock, pos = (pos + kBlock) % kInputFrames) {
-    engine->Process(c, &input_l[pos], &input_r[pos], NULL, NULL, out_l, out_r,
+    engine->Process(c, &input_l[pos], &input_r[pos], freeze, NULL, out_l, out_r,
                     gate, kBlock);
   }
   float peak = 0.0f;
   for (size_t n = 0; n < total; n += kBlock, pos = (pos + kBlock) % kInputFrames) {
     Mark(phase);
-    engine->Process(c, &input_l[pos], &input_r[pos], NULL, NULL, out_l, out_r,
+    engine->Process(c, &input_l[pos], &input_r[pos], freeze, NULL, out_l, out_r,
                     gate, kBlock);
     Mark(0);
     for (size_t i = 0; i < kBlock; ++i) peak = std::max(peak, fabsf(out_l[i]));
@@ -123,20 +130,21 @@ int main() {
   }
   printf("sizeof(Engine) %u\n", unsigned(sizeof(Engine)));
   static const Config configs[] = {
-    { "hifi stereo granular", QUALITY_DIGITAL, false, false, false, 0.95f, 0.3f, 0.6f },
-    { "hifi stereo delay", QUALITY_DIGITAL, false, true, false, 0.95f, 0.3f, 0.6f },
-    { "hifi mono granular", QUALITY_DIGITAL, true, false, false, 0.95f, 0.3f, 0.6f },
-    { "cold stereo granular", QUALITY_VINTAGE_DIGITAL, false, false, false, 0.95f, 0.3f, 0.6f },
-    { "cold stereo delay", QUALITY_VINTAGE_DIGITAL, false, true, false, 0.95f, 0.3f, 0.6f },
-    { "sunny stereo granular", QUALITY_CLEAN_TAPE, false, false, false, 0.95f, 0.3f, 0.6f },
-    { "sunny stereo delay", QUALITY_CLEAN_TAPE, false, true, false, 0.95f, 0.3f, 0.6f },
-    { "scorched stereo granular", QUALITY_DIRTY_TAPE, false, false, false, 0.95f, 0.3f, 0.6f },
-    { "scorched stereo delay", QUALITY_DIRTY_TAPE, false, true, false, 0.95f, 0.3f, 0.6f },
-    { "hifi granular moderate", QUALITY_DIGITAL, false, false, false, 0.75f, 0.0f, 0.6f },
-    { "hifi granular size 0.95", QUALITY_DIGITAL, false, false, false, 0.95f, 0.3f, 0.95f },
-    { "hifi granular size 0.8", QUALITY_DIGITAL, false, false, false, 0.95f, 0.3f, 0.8f },
-    { "sunny granular size 0.95", QUALITY_CLEAN_TAPE, false, false, false, 0.95f, 0.3f, 0.95f },
-    { "synth", QUALITY_DIGITAL, false, false, true, 0.95f, 0.3f, 0.6f },
+    { "hifi stereo granular", QUALITY_DIGITAL, false, false, false, 0.95f, 0.3f, 0.6f, false },
+    { "hifi stereo delay", QUALITY_DIGITAL, false, true, false, 0.95f, 0.3f, 0.6f, false },
+    { "hifi mono granular", QUALITY_DIGITAL, true, false, false, 0.95f, 0.3f, 0.6f, false },
+    { "cold stereo granular", QUALITY_VINTAGE_DIGITAL, false, false, false, 0.95f, 0.3f, 0.6f, false },
+    { "cold stereo delay", QUALITY_VINTAGE_DIGITAL, false, true, false, 0.95f, 0.3f, 0.6f, false },
+    { "sunny stereo granular", QUALITY_CLEAN_TAPE, false, false, false, 0.95f, 0.3f, 0.6f, false },
+    { "sunny stereo delay", QUALITY_CLEAN_TAPE, false, true, false, 0.95f, 0.3f, 0.6f, false },
+    { "scorched stereo granular", QUALITY_DIRTY_TAPE, false, false, false, 0.95f, 0.3f, 0.6f, false },
+    { "scorched stereo delay", QUALITY_DIRTY_TAPE, false, true, false, 0.95f, 0.3f, 0.6f, false },
+    { "hifi granular moderate", QUALITY_DIGITAL, false, false, false, 0.75f, 0.0f, 0.6f, false },
+    { "hifi granular size 0.95", QUALITY_DIGITAL, false, false, false, 0.95f, 0.3f, 0.95f, false },
+    { "hifi granular size 0.8", QUALITY_DIGITAL, false, false, false, 0.95f, 0.3f, 0.8f, false },
+    { "sunny granular size 0.95", QUALITY_CLEAN_TAPE, false, false, false, 0.95f, 0.3f, 0.95f, false },
+    { "hifi stereo delay frozen", QUALITY_DIGITAL, false, true, false, 0.95f, 0.3f, 0.6f, true },
+    { "synth", QUALITY_DIGITAL, false, false, true, 0.95f, 0.3f, 0.6f, false },
   };
   const char* only = NULL;
   (void)only;

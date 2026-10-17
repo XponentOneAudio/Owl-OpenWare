@@ -234,8 +234,13 @@ class Engine {
   GainControl gain_control_;
 
   // 48 kHz <-> 32 kHz for the vintage digital mode.
-  RationalResampler<2, 3, 192, kBlockSize> down_;
-  RationalResampler<3, 2, 192, 2 * kBlockSize / 3> up_;
+  // Filter length (192 on the Nebulae; the Lich uses 96 to save CPU, which
+  // widens the transition band above the 14.5 kHz cutoff).
+#ifndef PEARLS_RESAMPLER_TAPS
+#define PEARLS_RESAMPLER_TAPS 192
+#endif
+  RationalResampler<2, 3, PEARLS_RESAMPLER_TAPS, kBlockSize> down_;
+  RationalResampler<3, 2, PEARLS_RESAMPLER_TAPS, 2 * kBlockSize / 3> up_;
 
   Controls controls_;
   Status status_;

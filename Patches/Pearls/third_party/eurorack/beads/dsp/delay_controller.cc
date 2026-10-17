@@ -258,6 +258,14 @@ void DelayController::RenderInternal(
       }
       
       float slice_index_smooth = slice_index_filter_.Process(slice_modulation);
+
+      // Lich port: the play heads' envelope shape, once for all heads.
+      const float head_pw_table[6] = {
+        0.0f, 0.001f, 0.01f, 0.5f, 0.75f, 0.999f
+      };
+      const float head_pw = stmlib::Interpolate(head_pw_table, shape, 5.0f);
+      const float head_slope_up = 1.0f / head_pw;
+      const float head_slope_down = 1.0f / (1.0f - head_pw);
       
       for (int i = 0; i < NUM_HEADS; ++i) {
         PlayHead* new_head = NULL;
@@ -290,7 +298,8 @@ void DelayController::RenderInternal(
               slice_duration,
               tap_gain[ratio] * clock_.gain(interval));
         }
-        play_head_[i].Render(&out->tap[2 * i], shape, false);
+        play_head_[i].Render(
+            &out->tap[2 * i], shape, head_pw, head_slope_up, head_slope_down);
         slave_play_head_[i].Render(&out->tap[2 * i + 1], shape, true);
       }
       out->gate = \
@@ -321,6 +330,7 @@ void DelayController::RenderInternal(
       
       float loudest = 0.0f;
       int loudest_index = 0;
+      const TapEnvelope::Shape envelope_shape = TapEnvelope::ComputeShape(shape);
       
       for (int t = 0; t < NUM_TAPS; ++t) {
         const int interval = t / NUM_HEADS;
@@ -343,7 +353,7 @@ void DelayController::RenderInternal(
             : 1.0f - multiplier_fractional;
         const float base_gain = tap_gain[ratio] * ratio_fade * \
             clock_.gain(interval);
-        out->tap[i].gain = base_gain * tap_envelope_[i].Render(shape);
+        out->tap[i].gain = base_gain * tap_envelope_[i].Render(envelope_shape);
         if (base_gain > loudest) {
           loudest = base_gain;
           loudest_index = i;

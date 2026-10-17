@@ -30,6 +30,9 @@
 #define BEADS_DSP_FX_REVERB_H_
 
 #include "stmlib/stmlib.h"
+
+#include <algorithm>
+#include <cmath>
 #include "stmlib/dsp/parameter_interpolator.h"
 
 #include "beads/dsp/fx/fx_engine.h"
@@ -56,6 +59,7 @@ class Reverb {
     dry_ = 0.0f;
     wet_ = 0.0f;
     send_ = 0.0f;
+    silent_samples_ = 0;
   }
   
   void Process(FloatFrame* in_out, size_t size) {
@@ -100,6 +104,19 @@ class Reverb {
     const float wet = output_gain;
     const float dry = (1.0f - mix_) * (1.0f + mix_);
     
+#ifndef BEADS_REVERB_ALWAYS_ON
+    // Lich port: with nothing sent to the reverb (mix 0) and a tail that has
+    // stayed under -90 dB for a second, the reverb only adds silence: skip
+    // it. The output differs from Beads by less than 3e-5.
+    if (send_amount == 0.0f && send_ == 0.0f && dry == 1.0f &&
+        fabsf(dry_ - 1.0f) < 1e-5f &&
+        silent_samples_ >= kSilentSamples) {
+      return;
+    }
+#endif  // BEADS_REVERB_ALWAYS_ON
+    float tail_peak = 0.0f;
+    const int block_size = int(size);
+
     stmlib::ParameterInterpolator wet_modulation(&wet_, wet, size);
     stmlib::ParameterInterpolator dry_modulation(&dry_, dry, size);
     stmlib::ParameterInterpolator send_modulation(
@@ -157,8 +174,12 @@ class Reverb {
       c.Write(wet);
       
       in_out->r = in_out->r * dry_amount + wet * wet_amount;
+      tail_peak = std::max(tail_peak, fabsf(wet * wet_amount));
       ++in_out;
     }
+    silent_samples_ = tail_peak < 3e-5f
+        ? std::min(silent_samples_ + block_size, kSilentSamples)
+        : 0;
   }
   
   inline void set_mix(float mix) {
@@ -190,6 +211,10 @@ class Reverb {
   
   float lp_1_;
   float lp_2_;
+
+  // Lich port: tail silence detection.
+  static const int kSilentSamples = 48000;
+  int silent_samples_;
   
   DISALLOW_COPY_AND_ASSIGN(Reverb);
 };

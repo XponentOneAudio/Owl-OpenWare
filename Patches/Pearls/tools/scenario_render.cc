@@ -24,6 +24,7 @@ struct Scenario {
   bool toggle_freeze;
   bool seed_gate;
   float reverse;
+  float reverb;
 };
 
 void Render(const Scenario& sc, std::vector<float>* output) {
@@ -41,12 +42,12 @@ void Render(const Scenario& sc, std::vector<float>* output) {
   c.pitch = sc.pitch;
   c.feedback = sc.feedback;
   c.dry_wet = 1.0f;
-  c.reverb = 0.3f;
+  c.reverb = sc.reverb;
   c.reverse = sc.reverse;
   c.gain = 20;
 
   const size_t kBlock = 32;
-  const size_t kTotal = 48000 * 6;
+  const size_t kTotal = 48000 * 6;  // keep in sync with compare_raw.py
   float in_l[kBlock], in_r[kBlock], out_l[kBlock], out_r[kBlock];
   uint8_t freeze[kBlock], seed[kBlock], gate[kBlock];
   float phase = 0.0f;
@@ -80,15 +81,23 @@ void Render(const Scenario& sc, std::vector<float>* output) {
 
 int main() {
   const Scenario scenarios[] = {
-    // quality, mono, size, density, random, pitch, fb, freeze, seed, reverse
-    { QUALITY_DIGITAL, false, 0.6f, 0.95f, 0.3f, 7.0f, 0.5f, true, false, 0.0f },
-    { QUALITY_DIGITAL, false, 0.95f, 0.9f, 0.5f, -5.0f, 0.3f, true, false, 0.3f },
-    { QUALITY_DIGITAL, true, 0.2f, 0.85f, 0.2f, 12.0f, 0.6f, false, false, 0.0f },
-    { QUALITY_VINTAGE_DIGITAL, false, 0.7f, 0.1f, 0.4f, 0.0f, 0.4f, true, false, 0.0f },
-    { QUALITY_CLEAN_TAPE, false, 0.5f, 0.75f, 0.0f, 3.0f, 0.7f, false, true, 0.5f },
-    { QUALITY_CLEAN_TAPE, true, 0.9f, 0.95f, 0.6f, -12.0f, 0.2f, true, false, 0.0f },
-    { QUALITY_DIRTY_TAPE, false, 0.4f, 0.6f, -0.5f, 5.0f, 0.5f, true, true, 0.0f },
-    { QUALITY_DIRTY_TAPE, true, 0.8f, 0.3f, 0.3f, 19.0f, 0.9f, false, true, 0.2f },
+    // quality, mono, size, density, random, pitch, fb, freeze, seed, reverse,
+    // reverb
+    { QUALITY_DIGITAL, false, 0.6f, 0.95f, 0.3f, 7.0f, 0.5f, true, false, 0.0f, 0.3f },
+    { QUALITY_DIGITAL, false, 0.95f, 0.9f, 0.5f, -5.0f, 0.3f, true, false, 0.3f, 0.3f },
+    { QUALITY_DIGITAL, true, 0.2f, 0.85f, 0.2f, 12.0f, 0.6f, false, false, 0.0f, 0.3f },
+    { QUALITY_VINTAGE_DIGITAL, false, 0.7f, 0.1f, 0.4f, 0.0f, 0.4f, true, false, 0.0f, 0.3f },
+    { QUALITY_CLEAN_TAPE, false, 0.5f, 0.75f, 0.0f, 3.0f, 0.7f, false, true, 0.5f, 0.3f },
+    { QUALITY_CLEAN_TAPE, true, 0.9f, 0.95f, 0.6f, -12.0f, 0.2f, true, false, 0.0f, 0.3f },
+    { QUALITY_DIRTY_TAPE, false, 0.4f, 0.6f, -0.5f, 5.0f, 0.5f, true, true, 0.0f, 0.3f },
+    { QUALITY_DIRTY_TAPE, true, 0.8f, 0.3f, 0.3f, 19.0f, 0.9f, false, true, 0.2f, 0.3f },
+    // Delay mode (size fully clockwise; Beads takes 1.5 s to switch).
+    { QUALITY_DIGITAL, false, 1.0f, 0.7f, 0.3f, 7.0f, 0.5f, false, false, 0.0f, 0.3f },
+    { QUALITY_DIGITAL, false, 1.0f, 0.3f, 0.0f, 0.0f, 0.6f, true, false, 0.0f, 0.0f },
+    { QUALITY_CLEAN_TAPE, true, 1.0f, 0.55f, 0.4f, -5.0f, 0.4f, true, true, 0.0f, 0.5f },
+    { QUALITY_VINTAGE_DIGITAL, false, 1.0f, 0.9f, -0.4f, 0.0f, 0.3f, false, true, 0.0f, 0.0f },
+    // No reverb (the Lich skips the reverb once its tail is silent).
+    { QUALITY_DIGITAL, false, 0.5f, 0.8f, 0.2f, 0.0f, 0.4f, false, false, 0.0f, 0.0f },
   };
   for (size_t i = 0; i < sizeof(scenarios) / sizeof(scenarios[0]); ++i) {
     std::vector<float> output;
