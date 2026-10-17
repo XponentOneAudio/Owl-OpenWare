@@ -30,5 +30,6 @@
 #include <cmath>
 #define fabsf(x) __builtin_fabsf(x)
 #define fabs(x) __builtin_fabs(x)
+#define sqrtf(x) __builtin_sqrtf(x)
 
 #endif  // PEARLS_OWL_LICH_CONFIG_H_

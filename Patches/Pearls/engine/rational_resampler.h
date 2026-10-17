@@ -68,7 +68,7 @@ class RationalResampler {
       const Real x = Real(i) - center;
       const Real sinc = x == Real(0)
           ? Real(2) * cutoff
-          : std::sin(Real(2) * pi * cutoff * x) / (pi * x);
+          : Sin(Real(2) * pi * cutoff * x) / (pi * x);
       const Real r = x / center;
       const Real window = BesselI0(
           kaiser_beta * std::sqrt(std::max<Real>(Real(0), Real(1) - r * r))) /
@@ -130,6 +130,27 @@ class RationalResampler {
   }
 
  private:
+  // sin() for the filter design: keeps libm (and on the Lich, the C++
+  // unwinder it pulls in) out of the build.
+  static PEARLS_FILTER_DESIGN_REAL Sin(PEARLS_FILTER_DESIGN_REAL x) {
+    typedef PEARLS_FILTER_DESIGN_REAL Real;
+    const Real pi = Real(3.14159265358979323846);
+    // Reduce to [-pi, pi], then to [-pi/2, pi/2].
+    const int turns = int(x / (Real(2) * pi) + (x >= 0 ? Real(0.5) : Real(-0.5)));
+    x -= Real(turns) * Real(2) * pi;
+    if (x > pi / Real(2)) x = pi - x;
+    if (x < -pi / Real(2)) x = -pi - x;
+    // Taylor series to x^15: error < 1e-9 on [-pi/2, pi/2].
+    const Real x2 = x * x;
+    Real term = x;
+    Real sum = x;
+    for (int k = 1; k < 8; ++k) {
+      term *= -x2 / (Real(2 * k) * Real(2 * k + 1));
+      sum += term;
+    }
+    return sum;
+  }
+
   static PEARLS_FILTER_DESIGN_REAL BesselI0(PEARLS_FILTER_DESIGN_REAL x) {
     typedef PEARLS_FILTER_DESIGN_REAL Real;
     Real sum = 1;
