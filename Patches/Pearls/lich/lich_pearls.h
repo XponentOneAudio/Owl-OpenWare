@@ -38,6 +38,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "lich/wav_reader.h"
+
 namespace pearls {
 
 class Engine;
@@ -49,9 +51,21 @@ enum Page {
   PAGE_GRAINS,    // TIME, SIZE, DENSITY, PITCH
   PAGE_MIX,       // SHAPE, FEEDBACK, DRY/WET, REVERB
   PAGE_RANDOM,    // TIME, SIZE, SHAPE, PITCH randomness
+  PAGE_EXTRAS,    // REVERSE, SPREAD, SCALE, SAMPLE (Pearls additions)
   PAGE_SETUP,     // QUALITY, INPUT GAIN, STEREO/MONO/SYNTH, SEED MODE
   PAGE_LAST
 };
+
+// SEED modes (setup page, knob D).
+enum SeedMode {
+  SEED_MODE_BUTTON,   // Beads' SEED button
+  SEED_MODE_CLOCK,    // Beads' SEED input
+  SEED_MODE_TAP,      // tap tempo (Pearls addition)
+  SEED_MODE_LAST
+};
+
+// Sample slots: resources "pearls-1.wav" to "pearls-8.wav".
+const int kNumSampleSlots = 8;
 
 enum Knob { KNOB_A, KNOB_B, KNOB_C, KNOB_D, NUM_KNOBS };
 enum Button { BUTTON_FREEZE, BUTTON_SEED, NUM_BUTTONS };
@@ -110,6 +124,16 @@ class LichPearls {
   bool set_wavetables(const void* data, size_t bytes);
   bool synth_available() const { return synth_available_; }
 
+  // Samples. The host polls TakeSampleRequest() for a slot (1..8) chosen
+  // on the extras page, reads that resource, and passes the WAV file to
+  // LoadSample() (or calls SampleFailed()), keeping it until sample_busy()
+  // turns false. SampleReading() makes the LEDs show the read.
+  int TakeSampleRequest();
+  void SampleReading();
+  bool LoadSample(const void* wav, size_t bytes);
+  void SampleFailed();
+  bool sample_busy() const { return sample_busy_; }
+
   // Upper limit of the governor (4..32).
   void set_grain_ceiling(int grains);
 
@@ -128,6 +152,7 @@ class LichPearls {
   };
 
   void ReadKnobs(const Inputs& inputs);
+  void Blink(int count, bool fast);
   void ChangePage(int page);
   void UpdateButtons(const Inputs& inputs, size_t size);
   void UpdateControls();
@@ -149,7 +174,7 @@ class LichPearls {
   bool freeze_momentary_;           // press held long: release unfreezes
   bool freeze_combo_;               // FREEZE press used for a page change
   bool seed_combo_;                 // SEED hold used for a page change
-  bool seed_clock_mode_;            // SEED is the seed input (else button)
+  int seed_mode_;                   // SeedMode
   bool seed_pulse_;                 // a SEED trigger within this block
   uint8_t seed_gate_[kMaxBlockSize];
 
@@ -159,6 +184,15 @@ class LichPearls {
   int blink_count_;
   size_t grain_led_time_;
   int last_quality_zone_;
+  int last_scale_zone_;
+  int last_sample_zone_;
+  bool fast_blink_;                 // error blink
+  bool sample_reading_;
+
+  // Samples.
+  int sample_request_;
+  bool sample_busy_;
+  WavInfo wav_info_;
 
   // Outputs.
   float random_cv_;

@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
 #include "engine/pearls_engine.h"
 #include "lich/lich_pearls.h"
@@ -211,6 +212,24 @@ void TestPagesAndPickup() {
   rig.Turn(KNOB_A, 0.0f);
   CHECK_NEAR(c.time_random, -1.0, 1e-5);
 
+  // Extras page: reverse, spread, scale.
+  rig.NextPage();
+  CHECK(rig.pearls.ui_state().page == PAGE_EXTRAS);
+  rig.Turn(KNOB_A, 0.0f);
+  rig.Turn(KNOB_A, 0.7f);
+  CHECK_NEAR(c.reverse, 0.7, 1e-6);
+  rig.Turn(KNOB_B, 0.0f);
+  rig.Turn(KNOB_B, 0.4f);
+  CHECK_NEAR(c.spread, 0.4, 1e-6);
+  rig.Turn(KNOB_C, 0.06f);
+  CHECK(c.scale == SCALE_OFF);
+  rig.Turn(KNOB_C, 0.30f);
+  CHECK(c.scale == SCALE_MAJOR);
+  rig.Turn(KNOB_C, 0.43f);
+  CHECK(c.scale == SCALE_MINOR);
+  rig.Turn(KNOB_C, 0.99f);
+  CHECK(c.scale == SCALE_OCTAVES);
+
   // Setup page.
   rig.NextPage();
   CHECK(rig.pearls.ui_state().page == PAGE_SETUP);
@@ -313,8 +332,8 @@ void TestSeed() {
     Rig rig;
     rig.in.knob[KNOB_B] = 0.3f;
     rig.GoToPage(PAGE_SETUP);
-    rig.Turn(KNOB_D, 0.25f);
-    rig.Turn(KNOB_D, 0.9f);
+    rig.Turn(KNOB_D, 0.15f);
+    rig.Turn(KNOB_D, 0.5f);
     rig.GoToPage(PAGE_GRAINS);
     rig.Turn(KNOB_C, 1.0f);      // every clock pulse makes a grain
     // No edges for 4 s: unpatched, grains run free (as Pearls on Nebulae).
@@ -333,6 +352,141 @@ void TestSeed() {
     rig.Press(BUTTON_SEED, 4.2f);
     CHECK(rig.pearls.ui_state().seed_locked);
   }
+}
+
+void TestTap() {
+  printf("seed, tap mode: tap tempo clocks the grains\n");
+  Rig rig;
+  rig.in.knob[KNOB_B] = 0.3f;
+  rig.GoToPage(PAGE_SETUP);
+  rig.Turn(KNOB_D, 0.15f);
+  rig.Turn(KNOB_D, 0.9f);
+  rig.GoToPage(PAGE_GRAINS);
+  rig.Turn(KNOB_C, 1.0f);       // a grain on every beat
+  rig.Run(1.0f);
+  for (int i = 0; i < 4; ++i) {  // taps 0.25 s apart: 240 BPM
+    rig.Press(BUTTON_SEED, 0.02f);
+    rig.Run(0.23f);
+  }
+  rig.ResetCounters();
+  rig.Run(2.0f);
+  // The clock goes on after the taps: about 8 beats in 2 s.
+  CHECK(rig.gate_rises >= 6 && rig.gate_rises <= 10);
+  rig.Press(BUTTON_SEED, 1.2f);  // a 1 s press stops it
+  rig.ResetCounters();
+  rig.Run(2.0f);
+  CHECK(rig.gate_rises <= 9);
+}
+
+// A WAV file in memory.
+std::vector<uint8_t> MakeWav(int channels, int bits, bool ieee, int rate,
+                             int frames) {
+  std::vector<uint8_t> w;
+  auto put = [&w](uint32_t v, int n) {
+    for (int i = 0; i < n; ++i) w.push_back(uint8_t(v >> (8 * i)));
+  };
+  const int bytes = bits / 8;
+  const int data = frames * channels * bytes;
+  w.insert(w.end(), {'R', 'I', 'F', 'F'});
+  put(36 + 8 + 4 + data, 4);  // with a LIST chunk
+  w.insert(w.end(), {'W', 'A', 'V', 'E', 'L', 'I', 'S', 'T'});
+  put(4, 4);
+  w.insert(w.end(), {'I', 'N', 'F', 'O'});
+  w.insert(w.end(), {'f', 'm', 't', ' '});
+  put(16, 4);
+  put(ieee ? 3 : 1, 2);
+  put(channels, 2);
+  put(rate, 4);
+  put(rate * channels * bytes, 4);
+  put(channels * bytes, 2);
+  put(bits, 2);
+  w.insert(w.end(), {'d', 'a', 't', 'a'});
+  put(data, 4);
+  for (int f = 0; f < frames; ++f) {
+    for (int c = 0; c < channels; ++c) {
+      const float v = 0.5f * sinf(6.2831853f * 440.0f * f / rate) *
+          (c ? -1.0f : 1.0f);
+      if (ieee) {
+        uint32_t u;
+        memcpy(&u, &v, 4);
+        put(u, 4);
+      } else if (bits == 8) {
+        put(uint32_t(int(v * 127.0f) + 128), 1);
+      } else {
+        const int64_t full = int64_t(v * float(1u << (bits - 1)));
+        put(uint32_t(full), bytes);
+      }
+    }
+  }
+  return w;
+}
+
+void TestWav() {
+  printf("WAV reader: formats and errors\n");
+  const int formats[][3] = {
+    { 16, 0, 2 }, { 24, 0, 2 }, { 32, 0, 1 }, { 8, 0, 1 }, { 32, 1, 2 },
+  };
+  for (const auto& f : formats) {
+    std::vector<uint8_t> w = MakeWav(f[2], f[0], f[1], 44100, 1000);
+    WavInfo info;
+    CHECK(ParseWav(&w[0], w.size(), &info));
+    CHECK(info.frames == 1000);
+    CHECK_NEAR(info.sample_rate, 44100, 0);
+    float l, r;
+    ReadWavFrame(&info, 25, &l, &r);   // a quarter period at 440 Hz
+    const float expected = 0.5f * sinf(6.2831853f * 440.0f * 25 / 44100);
+    CHECK_NEAR(l, expected, f[0] == 8 ? 0.01 : 1e-4);
+    CHECK_NEAR(r, f[2] == 2 ? -expected : expected, f[0] == 8 ? 0.01 : 1e-4);
+  }
+  std::vector<uint8_t> w = MakeWav(2, 16, false, 48000, 100);
+  WavInfo info;
+  CHECK(!ParseWav(&w[0], 20, &info));        // truncated
+  w[8] = 'X';
+  CHECK(!ParseWav(&w[0], w.size(), &info));  // not WAVE
+  CHECK(!ParseWav(NULL, 0, &info));
+}
+
+void TestSamples() {
+  printf("samples: the extras page loads a slot into the buffer, frozen\n");
+  Rig rig;
+  rig.in.knob[KNOB_A] = 0.0f;
+  rig.Run(0.5f);
+  CHECK(rig.pearls.TakeSampleRequest() == 0);
+  rig.GoToPage(PAGE_EXTRAS);
+  rig.Turn(KNOB_D, 0.0f);
+  rig.Turn(KNOB_D, 3.5f / 9.0f);   // slot 3
+  const int slot = rig.pearls.TakeSampleRequest();
+  CHECK(slot == 3);
+  CHECK(rig.pearls.TakeSampleRequest() == 0);
+  rig.pearls.SampleReading();
+  rig.Run(0.1f);
+  std::vector<uint8_t> w = MakeWav(2, 16, false, 44100, 44100);
+  CHECK(rig.pearls.LoadSample(&w[0], w.size()));
+  CHECK(rig.pearls.sample_busy());
+  rig.Run(3.0f);
+  CHECK(!rig.pearls.sample_busy());
+  CHECK(rig.pearls.ui_state().frozen);  // loaded = frozen
+  // The sample plays (the input is a different tone; it isn't recorded).
+  rig.GoToPage(PAGE_GRAINS);
+  rig.Turn(KNOB_C, 0.9f);
+  rig.ResetCounters();
+  rig.Run(1.0f);
+  CHECK(rig.peak > 0.05f);
+  // One FREEZE press releases it.
+  rig.Press(BUTTON_FREEZE, 0.05f);
+  rig.Run(0.1f);
+  CHECK(!rig.pearls.ui_state().frozen);
+  // A bad file or a missing resource: an error, nothing loads.
+  rig.GoToPage(PAGE_EXTRAS);
+  rig.Turn(KNOB_D, 3.5f / 9.0f);
+  rig.Turn(KNOB_D, 5.5f / 9.0f);
+  CHECK(rig.pearls.TakeSampleRequest() == 5);
+  w[8] = 'X';
+  CHECK(!rig.pearls.LoadSample(&w[0], w.size()));
+  CHECK(!rig.pearls.sample_busy());
+  rig.pearls.SampleFailed();
+  rig.Run(0.5f);
+  CHECK(!rig.pearls.ui_state().frozen);
 }
 
 void TestLeds() {
@@ -431,6 +585,9 @@ int main() {
   TestPagesAndPickup();
   TestFreeze();
   TestSeed();
+  TestTap();
+  TestWav();
+  TestSamples();
   TestLeds();
   TestGovernor();
   TestAudio();

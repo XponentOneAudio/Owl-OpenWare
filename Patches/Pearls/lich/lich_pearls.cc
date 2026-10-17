@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <new>
 
 #include "engine/pearls_engine.h"
@@ -66,6 +67,15 @@ const int kMaxGrains = 32;
 
 // Setup page zones.
 const int kNumQualityZones = 4;
+
+// Selector knobs: n zones, with hysteresis around the current one.
+inline int Zone(float v, int n, int current) {
+  const float z = v * float(n);
+  if (z < float(current) - 0.1f || z > float(current + 1) + 0.1f) {
+    current = std::min(n - 1, std::max(0, int(z)));
+  }
+  return current;
+}
 
 inline float Bipolar(float v) {
   // Attenuverter with a dead zone at noon: -1..+1.
@@ -114,7 +124,9 @@ bool LichPearls::Init(float sample_rate) {
     { 0.5f, 0.5f, 0.75f, 0.5f },     // TIME, SIZE, DENSITY, PITCH (unison)
     { 0.5f, 0.0f, 0.5f, 0.0f },      // SHAPE, FEEDBACK, DRY/WET, REVERB
     { 0.5f, 0.5f, 0.5f, 0.5f },      // no randomness
-    { 0.125f, 0.0f, 0.15f, 0.25f },  // hi-fi, auto gain, stereo, button
+    { 0.0f, 0.0f, 0.0625f, 0.055f }, // as Beads: no reverse, spread, scale;
+                                     // no sample
+    { 0.125f, 0.0f, 0.15f, 0.15f },  // hi-fi, auto gain, stereo, button
   };
   for (int p = 0; p < PAGE_LAST; ++p) {
     for (int k = 0; k < NUM_KNOBS; ++k) {
@@ -138,7 +150,7 @@ bool LichPearls::Init(float sample_rate) {
   freeze_momentary_ = false;
   freeze_combo_ = false;
   seed_combo_ = false;
-  seed_clock_mode_ = false;
+  seed_mode_ = SEED_MODE_BUTTON;
   seed_pulse_ = false;
   std::fill(&seed_gate_[0], &seed_gate_[kMaxBlockSize], 0);
 
@@ -147,6 +159,13 @@ bool LichPearls::Init(float sample_rate) {
   blink_count_ = 0;
   grain_led_time_ = 0;
   last_quality_zone_ = 0;
+  last_scale_zone_ = 0;
+  last_sample_zone_ = 0;
+  fast_blink_ = false;
+  sample_reading_ = false;
+  sample_request_ = 0;
+  sample_busy_ = false;
+  memset(&wav_info_, 0, sizeof(wav_info_));
 
   random_cv_ = 0.5f;
   envelope_ = 0.0f;
@@ -203,6 +222,36 @@ bool LichPearls::set_wavetables(const void* data, size_t bytes) {
 #endif  // BEADS_EXTERNAL_WAVETABLES
 }
 
+int LichPearls::TakeSampleRequest() {
+  if (sample_busy_ || sample_reading_) {
+    return 0;  // asked again when the current load is done
+  }
+  const int slot = sample_request_;
+  sample_request_ = 0;
+  return slot;
+}
+
+void LichPearls::SampleReading() {
+  sample_reading_ = true;
+}
+
+bool LichPearls::LoadSample(const void* wav, size_t bytes) {
+  sample_reading_ = false;
+  if (!ParseWav(wav, bytes, &wav_info_) ||
+      !engine_->StartLoad(&ReadWavFrame, &wav_info_, wav_info_.frames,
+                          wav_info_.sample_rate, true)) {
+    SampleFailed();
+    return false;
+  }
+  sample_busy_ = true;
+  return true;
+}
+
+void LichPearls::SampleFailed() {
+  sample_reading_ = false;
+  Blink(6, true);
+}
+
 const Controls& LichPearls::controls() const {
   return *controls_;
 }
@@ -239,19 +288,19 @@ void LichPearls::UpdateGovernor(size_t size) {
   ui_.load = load_;
 }
 
+void LichPearls::Blink(int count, bool fast) {
+  blink_start_ = time_;
+  blink_count_ = count;
+  fast_blink_ = fast;
+}
+
 void LichPearls::ChangePage(int page) {
   page_ = page;
   for (int k = 0; k < NUM_KNOBS; ++k) {
     knobs_[page_][k].caught = false;
     knobs_[page_][k].last_raw = raw_[k];
   }
-  blink_start_ = time_;
-  blink_count_ = page_ + 1;
-  if (page_ == PAGE_SETUP) {
-    last_quality_zone_ = std::min(
-        kNumQualityZones - 1,
-        int(knobs_[PAGE_SETUP][KNOB_A].value * kNumQualityZones));
-  }
+  Blink(page_ + 1, false);
 }
 
 void LichPearls::ReadKnobs(const Inputs& inputs) {
@@ -298,13 +347,12 @@ void LichPearls::UpdateButtons(const Inputs& inputs, size_t size) {
   }
   if (seed) {
     held_time_[BUTTON_SEED] += size;
-  } else if (button_[BUTTON_SEED] && seed_clock_mode_) {
+  } else if (button_[BUTTON_SEED] && seed_mode_ == SEED_MODE_CLOCK) {
     // Released: a long press (not used for a page change) toggles the lock.
     if (!seed_combo_ && held_time_[BUTTON_SEED] >= lock_hold) {
       const bool locked = !engine_->status().seed_locked;
       engine_->set_seed_locked(locked);
-      blink_start_ = time_;
-      blink_count_ = locked ? 1 : 2;
+      Blink(locked ? 1 : 2, false);
     }
   }
 
@@ -365,16 +413,11 @@ void LichPearls::UpdateControls() {
   c.pitch_random = Bipolar(r[KNOB_D].value);
 
   const KnobState* s = knobs_[PAGE_SETUP];
-  // Quality, clockwise from hi-fi to scorched cassette, with hysteresis.
-  const float q = s[KNOB_A].value * kNumQualityZones;
-  int zone = last_quality_zone_;
-  if (q < float(zone) - 0.1f || q > float(zone + 1) + 0.1f) {
-    zone = std::min(kNumQualityZones - 1, std::max(0, int(q)));
-  }
+  // Quality, clockwise from hi-fi to scorched cassette.
+  const int zone = Zone(s[KNOB_A].value, kNumQualityZones, last_quality_zone_);
   if (zone != last_quality_zone_) {
     last_quality_zone_ = zone;
-    blink_start_ = time_;
-    blink_count_ = zone + 1;
+    Blink(zone + 1, false);
   }
   c.quality = QUALITY_DIGITAL - zone;
   const float gain = s[KNOB_B].value;
@@ -385,14 +428,36 @@ void LichPearls::UpdateControls() {
   const float buffer = s[KNOB_C].value;
   c.mono = buffer >= 1.0f / 3.0f && buffer < 2.0f / 3.0f;
   c.synth = synth_available_ && buffer >= 2.0f / 3.0f;
-  seed_clock_mode_ = s[KNOB_D].value > 0.5f;
+  seed_mode_ = Zone(s[KNOB_D].value, SEED_MODE_LAST, seed_mode_);
+
+  // Extras (Pearls additions).
+  const KnobState* x = knobs_[PAGE_EXTRAS];
+  c.reverse = x[KNOB_A].value;
+  c.spread = x[KNOB_B].value;
+  const int scale = Zone(x[KNOB_C].value, SCALE_LAST, last_scale_zone_);
+  if (scale != last_scale_zone_) {
+    last_scale_zone_ = scale;
+    Blink(scale + 1, false);
+  }
+  c.scale = scale;
+  // Sample slots: 0 = none, then 1..8. Choosing a slot loads it.
+  const int sample = Zone(x[KNOB_D].value, kNumSampleSlots + 1,
+                          last_sample_zone_);
+  if (sample != last_sample_zone_) {
+    last_sample_zone_ = sample;
+    sample_request_ = sample;
+    if (!sample) {
+      Blink(1, false);
+    }
+  }
 
   c.freeze = freeze_latched_;
-  // In button mode, a page change gesture is not a SEED press for the
-  // engine, but the SEED hold leading up to it is (as on Beads).
-  c.seed_button = !seed_clock_mode_ &&
-      ((button_[BUTTON_SEED] && !seed_combo_) || seed_pulse_);
-  c.tap = false;
+  // The SEED press, without the hold of a page change gesture (in button
+  // mode, the hold leading up to it is a SEED press, as on Beads).
+  const bool seed_press =
+      (button_[BUTTON_SEED] && !seed_combo_) || seed_pulse_;
+  c.seed_button = seed_mode_ == SEED_MODE_BUTTON && seed_press;
+  c.tap = seed_mode_ == SEED_MODE_TAP && seed_press;
 }
 
 void LichPearls::UpdateLeds(Outputs* outputs, size_t size) {
@@ -423,9 +488,15 @@ void LichPearls::UpdateLeds(Outputs* outputs, size_t size) {
     led_seed = phase < size_t(page_ + 1) * period && (phase % period) < on;
   }
 
-  if (blink_count_ && t < size_t(blink_count_) * blink_period) {
-    // Page or setting change: both LEDs blink the number.
-    led_freeze = led_seed = (t % blink_period) < blink_on;
+  if (sample_reading_ || sample_busy_) {
+    // Loading a sample: the FREEZE LED flickers.
+    led_freeze = (time_ / size_t(0.05f * sample_rate_)) & 1;
+  }
+  const size_t period = fast_blink_ ? blink_period / 3 : blink_period;
+  const size_t on = fast_blink_ ? blink_on / 3 : blink_on;
+  if (blink_count_ && t < size_t(blink_count_) * period) {
+    // Page or setting change: both LEDs blink the number. Errors: fast.
+    led_freeze = led_seed = (t % period) < on;
   } else {
     blink_count_ = 0;
   }
@@ -465,9 +536,16 @@ void LichPearls::Process(
   UpdateControls();
   UpdateGovernor(size);
 
+  // A finished sample load: frozen, as on the Nebulae.
+  if (sample_busy_ && engine_->transfer_state() == TRANSFER_DONE) {
+    engine_->EndTransfer();
+    sample_busy_ = false;
+    Blink(last_sample_zone_ > 0 ? last_sample_zone_ : 1, false);
+  }
+
   uint8_t gate[kMaxBlockSize];
   engine_->Process(*controls_, in_l, in_r, NULL,
-                   seed_clock_mode_ ? seed_gate_ : NULL,
+                   seed_mode_ == SEED_MODE_CLOCK ? seed_gate_ : NULL,
                    out_l, out_r, gate, size);
 
   // Gate output: the grain gate. CV 1: a new random value on each grain;

@@ -61,9 +61,12 @@ const float kTapStopTime = 1.0f;            // s
 const float kClockPulseTime = 0.005f;       // s
 const float kClockLedTime = 0.05f;          // s
 
-// Frames copied to or from the buffer per Process() call: about 0.2 ms of
-// work on a Raspberry Pi 3.
-const size_t kTransferChunk = 4096;
+// Frames copied to or from the buffer per Process() call: 4096 is about
+// 0.2 ms of work on a Raspberry Pi 3; the Lich uses 256.
+#ifndef PEARLS_TRANSFER_CHUNK
+#define PEARLS_TRANSFER_CHUNK 4096
+#endif
+const size_t kTransferChunk = PEARLS_TRANSFER_CHUNK;
 
 // Input presence detection, replacing the Beads normalisation probe: input
 // is considered unpatched after 2 s below -66 dBFS, and patched again as soon
@@ -239,6 +242,8 @@ bool Engine::Init() {
 
   transfer_state_ = TRANSFER_IDLE;
   load_l_ = load_r_ = NULL;
+  load_reader_ = NULL;
+  load_context_ = NULL;
   save_l_ = save_r_ = NULL;
   transfer_source_frames_ = 0;
   transfer_source_rate_ = float(kSampleRate);
@@ -254,18 +259,42 @@ bool Engine::Init() {
   return true;
 }
 
+void Engine::ReadLoadArrays(const void* context, size_t frame,
+                            float* l, float* r) {
+  const Engine* engine = static_cast<const Engine*>(context);
+  *l = engine->load_l_[frame];
+  *r = engine->load_r_[frame];
+}
+
 bool Engine::StartLoad(
     const float* l,
     const float* r,
     size_t frames,
     float sample_rate,
     bool hold) {
-  if (transfer_state_ != TRANSFER_IDLE || !l || !r || !frames ||
-      sample_rate < 1000.0f) {
+  if (!l || !r) {
+    return false;
+  }
+  if (!StartLoad(&ReadLoadArrays, this, frames, sample_rate, hold)) {
     return false;
   }
   load_l_ = l;
   load_r_ = r;
+  return true;
+}
+
+bool Engine::StartLoad(
+    FrameReader reader,
+    const void* context,
+    size_t frames,
+    float sample_rate,
+    bool hold) {
+  if (transfer_state_ != TRANSFER_IDLE || !reader || !frames ||
+      sample_rate < 1000.0f) {
+    return false;
+  }
+  load_reader_ = reader;
+  load_context_ = context;
   transfer_source_frames_ = frames;
   transfer_source_rate_ = sample_rate;
   transfer_hold_ = hold;
@@ -321,8 +350,10 @@ void Engine::ContinueTransfer() {
             max(size_t(position + step), i + 1), last + 1);
         float l = 0.0f, r = 0.0f;
         for (size_t k = i; k < j; ++k) {
-          l += load_l_[k];
-          r += load_r_[k];
+          float kl, kr;
+          load_reader_(load_context_, k, &kl, &kr);
+          l += kl;
+          r += kr;
         }
         frame.l = l / float(j - i);
         frame.r = r / float(j - i);
@@ -330,8 +361,11 @@ void Engine::ContinueTransfer() {
         // Upsampling: linear interpolation.
         const size_t next = min(i + 1, last);
         const float t = float(position - double(i));
-        frame.l = load_l_[i] + (load_l_[next] - load_l_[i]) * t;
-        frame.r = load_r_[i] + (load_r_[next] - load_r_[i]) * t;
+        float il, ir, nl, nr;
+        load_reader_(load_context_, i, &il, &ir);
+        load_reader_(load_context_, next, &nl, &nr);
+        frame.l = il + (nl - il) * t;
+        frame.r = ir + (nr - ir) * t;
       }
       CONSTRAIN(frame.l, -1.0f, 1.0f);
       CONSTRAIN(frame.r, -1.0f, 1.0f);

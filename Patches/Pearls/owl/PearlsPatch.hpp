@@ -27,6 +27,10 @@ class PearlsPatch : public Patch {
       led_[b] = -1;
     }
     gate_ = -1;
+    sample_resource_ = NULL;
+    sample_data_ = NULL;
+    sample_size_ = 0;
+    sample_read_ = 0;
     // The wavetable synth's tables, stored once in the Lich's flash (see
     // README.md). Without them, everything but synth mode works.
     Resource* waves = Resource::load("pearls-waves");
@@ -82,6 +86,8 @@ class PearlsPatch : public Patch {
     setParameterValue(PARAMETER_F, out.cv[0]);
     setParameterValue(PARAMETER_G, out.cv[1]);
 
+    UpdateSampleLoad();
+
     // CPU governor: OpenWare resets the cycle counter before each block.
     if (cycles_per_block_ == 0.0f) {
       cycles_per_block_ = float(size) * 180e6f / getSampleRate();
@@ -90,6 +96,68 @@ class PearlsPatch : public Patch {
   }
 
  private:
+  // Samples: resources "pearls-1.wav" to "pearls-8.wav", read from flash a
+  // few kB per block (a whole file at once would stall the audio).
+  void UpdateSampleLoad() {
+    static const size_t kChunk = 4096;
+    static const size_t kMaxSize = 6 << 20;  // the SDRAM has about 7 MB free
+    if (sample_resource_) {
+      const size_t n = std::min(kChunk, sample_size_ - sample_read_);
+      if (sample_resource_->read(sample_data_ + sample_read_, n,
+                                 sample_read_) != n) {
+        FinishSampleRead();
+        FreeSample();
+        pearls_.SampleFailed();
+        return;
+      }
+      sample_read_ += n;
+      if (sample_read_ == sample_size_) {
+        FinishSampleRead();
+        if (!pearls_.LoadSample(sample_data_, sample_size_)) {
+          FreeSample();
+        }
+      }
+    } else if (sample_data_) {
+      if (!pearls_.sample_busy()) {
+        FreeSample();  // copied into the buffer
+      }
+    } else {
+      const int slot = pearls_.TakeSampleRequest();
+      if (slot <= 0) {
+        return;
+      }
+      char name[16] = "pearls-0.wav";
+      name[7] = char('0' + slot);
+      sample_resource_ = Resource::open(name);
+      sample_size_ = sample_resource_ ? sample_resource_->getSize() : 0;
+      if (sample_size_ && sample_size_ <= kMaxSize) {
+        sample_data_ = new uint8_t[sample_size_];
+      }
+      if (!sample_data_) {
+        FinishSampleRead();
+        pearls_.SampleFailed();
+        return;
+      }
+      sample_read_ = 0;
+      pearls_.SampleReading();
+    }
+  }
+
+  void FinishSampleRead() {
+    Resource::destroy(sample_resource_);
+    sample_resource_ = NULL;
+  }
+
+  void FreeSample() {
+    delete[] sample_data_;
+    sample_data_ = NULL;
+  }
+
+  Resource* sample_resource_;
+  uint8_t* sample_data_;
+  size_t sample_size_;
+  size_t sample_read_;
+
   pearls::lich::LichPearls pearls_;
   bool level_[pearls::lich::NUM_BUTTONS];
   bool pulse_[pearls::lich::NUM_BUTTONS];

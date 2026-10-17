@@ -188,6 +188,13 @@ class Engine {
   // pressed: the next press releases it.
   bool StartLoad(const float* l, const float* r, size_t frames,
                  float sample_rate, bool hold);
+  // The same, reading frames through a callback (the Lich reads them from a
+  // WAV file in memory, without a float copy). context must stay valid
+  // until the transfer is done.
+  typedef void (*FrameReader)(const void* context, size_t frame,
+                              float* l, float* r);
+  bool StartLoad(FrameReader reader, const void* context, size_t frames,
+                 float sample_rate, bool hold);
   // StartSave copies the buffer contents, oldest frame first, into arrays of
   // at least `capacity` frames.
   bool StartSave(float* l, float* r, size_t capacity);
@@ -210,6 +217,8 @@ class Engine {
   void UpdatePitch();
   void UpdateTapClock(bool* pulses);
   void ContinueTransfer();
+  static void ReadLoadArrays(const void* context, size_t frame,
+                             float* l, float* r);
   void UpdateSeedButton(bool pressed, bool freeze_toggled);
   void UpdateConfiguration();
   void ApplyConfiguration();
@@ -316,6 +325,8 @@ class Engine {
   TransferState transfer_state_;
   const float* load_l_;
   const float* load_r_;
+  FrameReader load_reader_;
+  const void* load_context_;
   float* save_l_;
   float* save_r_;
   size_t transfer_source_frames_;

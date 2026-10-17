@@ -14,3 +14,4 @@
 #include "engine/gain_control.cc"
 #include "engine/pearls_engine.cc"
 #include "lich/lich_pearls.cc"
+#include "lich/wav_reader.cc"
