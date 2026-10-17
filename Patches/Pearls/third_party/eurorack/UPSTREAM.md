@@ -61,3 +61,38 @@ Fourth change, pitch quantisation (pearls7):
   the upstream behaviour.
 
 `git diff --no-index` against the upstream commit shows exactly these edits.
+
+## Lich port changes
+
+Copied from the Nebulae port (QB_Nebulae_V2 branch `ccr-c1f1464e-wcl7nr`,
+commit `cbb6412`), then changed for the Befaco Lich (STM32F427 at 180 MHz,
+against Beads' 400 MHz STM32H7). Unless a macro says otherwise, each change
+gives the same output; `tools/check_block_rendering.sh` checks them against
+an unmodified tree.
+
+Same output:
+
+- `delay_grain.h`, `delay_granular_player.h`, `granular_processor.h`,
+  `delay_line.h`: grains are rendered over a block before it is written
+  (`RenderGrainsBlock`, `RenderSegment`, `DelayLine::ReadAt`, read state
+  accessors). Exact except for a grain fading out within the last frames
+  of the buffer (gain under 1%, differences under 1e-5 in the tests).
+  `-DBEADS_PER_SAMPLE_GRAINS` restores the per-sample rendering.
+- `granular_player.h`: `set_max_grains()`, a runtime voice limit (32 =
+  Beads). Above a lowered limit, grains fade out like stolen grains.
+- `tap.h`: delay taps with zero gain skip their reads.
+- `delay_controller.{h,cc}`: the tap envelope and play head triangle slopes
+  are computed once per sample instead of once per tap.
+- `fx/reverb.h`: the reverb is skipped while nothing is sent to it and its
+  tail has been under -90 dB for a second (`-DBEADS_REVERB_ALWAYS_ON`
+  disables this; differences under 2e-7 in the tests).
+- `resources.{h,cc}`: with `BEADS_EXTERNAL_WAVETABLES`, the wavetables are
+  a pointer the host sets (the Lich loads them from a resource).
+
+Different output, selected by the Lich build (`owl/lich_config.h`):
+
+- `fx/reverb.h`: `ReverbT<divider>`; `BEADS_REVERB_DIVIDER 2` runs the
+  reverb at 24 kHz with half the memory (same decay times within 6%,
+  same levels within 1 dB, the 8-12 kHz band 10 dB lower).
+- `BEADS_NO_WASTE_CPU` removes the dummy grain players that Beads uses to
+  waste CPU cycles.

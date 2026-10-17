@@ -253,10 +253,12 @@ class Processor {
     processor_dirty_tape_.set_max_grains(max_grains);
   }
 
+#ifndef BEADS_NO_WASTE_CPU
   void WasteCPUCycles(size_t size) {
     // The one with the most convoluted memory access!
     processor_vintage_digital_.WasteCPUCycles(size);
   }
+#endif  // BEADS_NO_WASTE_CPU
 
   void Process(
       SeedButtonState seed_button_state,
@@ -308,7 +310,7 @@ class Processor {
   float wet_;
   
   WowAndFlutter wow_and_flutter_;
-  Reverb reverb_;
+  ReverbT<BEADS_REVERB_DIVIDER> reverb_;
   Limiter pre_reverb_limiter_;
   Limiter output_limiter_;
   

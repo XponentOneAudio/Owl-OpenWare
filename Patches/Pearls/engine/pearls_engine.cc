@@ -42,7 +42,8 @@ namespace {
 // Same memory layout as the Beads firmware: 512 kB + 256 kB of delay memory
 // split in three 256 kB regions, and 64 kB of reverb memory.
 const size_t kDelayRegionSize = 256 * 1024;
-const size_t kReverbBufferSize = 32768;
+// Reverb memory: 32768 samples, half with the Lich's 24 kHz reverb.
+const size_t kReverbBufferSize = beads::ReverbT<BEADS_REVERB_DIVIDER>::kBufferSize;
 
 const float kSeedLongPressTime = 4.0f;      // s, seed button relocks
 const float kSeedPatchTimeout = 4.0f;       // s without edges = unpatched
@@ -145,11 +146,15 @@ Engine::~Engine() {
 bool Engine::Init() {
   // malloc and placement new, so that a failed allocation (possible on the
   // Lich) is reported instead of assumed away.
-  delay_buffer_ = static_cast<uint8_t*>(malloc(3 * kDelayRegionSize));
+  // On the Lich the heap fills its 56 kB of internal CCM first, in this
+  // order: the processor (15 kB of grain state, accessed most), the 24 kHz
+  // reverb's memory (32 kB), the synth (4 kB); the delay buffer goes to
+  // SDRAM.
+  void* processor_memory = malloc(sizeof(Processor));
   reverb_buffer_ = static_cast<uint16_t*>(
       malloc(kReverbBufferSize * sizeof(uint16_t)));
-  void* processor_memory = malloc(sizeof(Processor));
   void* synth_memory = malloc(sizeof(Synth));
+  delay_buffer_ = static_cast<uint8_t*>(malloc(3 * kDelayRegionSize));
   if (!delay_buffer_ || !reverb_buffer_ || !processor_memory ||
       !synth_memory) {
     free(processor_memory);

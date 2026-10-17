@@ -80,7 +80,7 @@ class Synth {
   float dry_;
   float wet_;
   
-  Reverb reverb_;
+  ReverbT<BEADS_REVERB_DIVIDER> reverb_;
   Limiter pre_reverb_limiter_;
   Limiter output_limiter_;
   

@@ -53,7 +53,9 @@ class GranularProcessor {
     mono_delay_line_.Init(buffers);
     stereo_delay_line_.Init(buffers);
 
+#ifndef BEADS_NO_WASTE_CPU
     dummy_granular_player_.Init(sample_rate);
+#endif  // BEADS_NO_WASTE_CPU
     granular_player_.Init(sample_rate);
     multitap_delay_.Init(sample_rate);
     
@@ -143,6 +145,7 @@ class GranularProcessor {
     return mono_delay_line_.raw_bytes(offset);
   }
   
+#ifndef BEADS_NO_WASTE_CPU
   inline void WasteCPUCycles(size_t size) {
     Parameters p;
   
@@ -180,6 +183,7 @@ class GranularProcessor {
       dummy_granular_player_.Render(&stereo_delay_line_, trigger, p, &out);
     }
   }
+#endif  // BEADS_NO_WASTE_CPU
   
   inline void Process(
       const TriggerGenerator::Output* triggers,
@@ -469,7 +473,11 @@ class GranularProcessor {
     delay_line->set_read_state(saved);
   }
 
+#ifndef BEADS_NO_WASTE_CPU
+  // Lich port: only used to waste CPU cycles (BEADS_NO_WASTE_CPU removes it,
+  // saving 2.4 kB of RAM per quality setting).
   DelayGranularPlayer dummy_granular_player_;
+#endif  // BEADS_NO_WASTE_CPU
   DelayGranularPlayer granular_player_;
   MultitapDelay multitap_delay_;
   
