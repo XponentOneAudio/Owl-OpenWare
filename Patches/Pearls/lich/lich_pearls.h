@@ -187,6 +187,7 @@ class LichPearls {
   int last_scale_zone_;
   int last_sample_zone_;
   bool fast_blink_;                 // error blink
+  bool synth_zone_previous_;
   bool sample_reading_;
 
   // Samples.

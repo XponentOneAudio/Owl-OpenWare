@@ -8,6 +8,9 @@
 #ifndef __PearlsPatch_hpp__
 #define __PearlsPatch_hpp__
 
+#include <algorithm>
+#include <cstring>
+
 #include "Patch.h"
 #include "lich/lich_pearls.h"
 
@@ -33,12 +36,19 @@ class PearlsPatch : public Patch {
     sample_read_ = 0;
     // The wavetable synth's tables, stored once in the Lich's flash (see
     // README.md). Without them, everything but synth mode works.
-    Resource* waves = Resource::load("pearls-waves");
-    if (waves && waves->hasData()) {
-      pearls_.set_wavetables(waves->getData(), waves->getSize());
+    waves_ = Resource::load("pearls-waves");
+    if (waves_ && waves_->hasData()) {
+      pearls_.set_wavetables(waves_->getData(), waves_->getSize());
     }
     ok_ = pearls_.Init(getSampleRate());
     cycles_per_block_ = 0.0f;
+  }
+
+  ~PearlsPatch() {
+    FinishSampleRead();
+    FreeSample();
+    pearls_.set_wavetables(NULL, 0);
+    Resource::destroy(waves_);
   }
 
   void buttonChanged(PatchButtonId bid, uint16_t value, uint16_t samples) override {
@@ -126,9 +136,10 @@ class PearlsPatch : public Patch {
       if (slot <= 0) {
         return;
       }
-      char name[16] = "pearls-0.wav";
-      name[7] = char('0' + slot);
-      sample_resource_ = Resource::open(name);
+      // A member: the Resource keeps a pointer to its name for read().
+      strcpy(sample_name_, "pearls-0.wav");
+      sample_name_[7] = char('0' + slot);
+      sample_resource_ = Resource::open(sample_name_);
       sample_size_ = sample_resource_ ? sample_resource_->getSize() : 0;
       if (sample_size_ && sample_size_ <= kMaxSize) {
         sample_data_ = new uint8_t[sample_size_];
@@ -153,7 +164,9 @@ class PearlsPatch : public Patch {
     sample_data_ = NULL;
   }
 
+  Resource* waves_;
   Resource* sample_resource_;
+  char sample_name_[16];
   uint8_t* sample_data_;
   size_t sample_size_;
   size_t sample_read_;

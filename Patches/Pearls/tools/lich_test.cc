@@ -18,6 +18,10 @@ namespace {
 
 int failures = 0;
 
+// The wavetables, for builds without them (BEADS_EXTERNAL_WAVETABLES): the
+// data of the resource file given on the command line, as on the Lich.
+std::vector<uint8_t> g_waves;
+
 #define CHECK(cond) do { \
     if (!(cond)) { \
       printf("  FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); \
@@ -63,6 +67,9 @@ struct Rig {
       led_seen_on[b] = false;
     }
     in.knob[KNOB_C] = 0.75f;
+    if (!g_waves.empty()) {
+      pearls.set_wavetables(&g_waves[0], g_waves.size());
+    }
     if (!pearls.Init(kRate)) {
       printf("Init failed\n");
       exit(1);
@@ -251,7 +258,7 @@ void TestPagesAndPickup() {
   rig.Turn(KNOB_C, 0.5f);
   CHECK(c.mono && !c.synth);
   rig.Turn(KNOB_C, 0.9f);
-  CHECK(c.synth);  // built-in wavetables on the desktop
+  CHECK(c.synth == rig.pearls.synth_available());
   rig.Turn(KNOB_C, 0.5f);
   CHECK(c.mono);
 
@@ -508,6 +515,25 @@ void TestLeds() {
   CHECK(rig.led_seen_on[BUTTON_SEED]);
 }
 
+void TestWavetables() {
+  printf("wavetables: checked, synth mode only with them\n");
+  Rig rig;
+#ifdef BEADS_EXTERNAL_WAVETABLES
+  CHECK(!rig.pearls.set_wavetables(NULL, 0));
+  std::vector<uint8_t> junk(99840, 0);
+  CHECK(!rig.pearls.set_wavetables(&junk[0], junk.size()));
+  CHECK(!rig.pearls.synth_available());
+  if (!g_waves.empty()) {
+    CHECK(rig.pearls.set_wavetables(&g_waves[0], g_waves.size()));
+    CHECK(rig.pearls.synth_available());
+  }
+#endif
+  rig.GoToPage(PAGE_SETUP);
+  rig.Turn(KNOB_C, 0.15f);
+  rig.Turn(KNOB_C, 0.9f);
+  CHECK(rig.pearls.controls().synth == rig.pearls.synth_available());
+}
+
 void TestGovernor() {
   printf("governor: grain voices follow the CPU load\n");
   Rig rig;
@@ -573,14 +599,27 @@ void TestAudio() {
   rig.Run(2.0f);
   rig.ResetCounters();
   rig.Run(1.0f);
-  CHECK(rig.pearls.controls().synth);
+  CHECK(rig.pearls.controls().synth == rig.pearls.synth_available());
   CHECK(rig.peak > 0.05f);
   CHECK(!rig.nan);
 }
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+  if (argc > 1) {
+    // An OpenWare resource (tools/make_wavetable_resource.py): 32-byte
+    // header, then the data.
+    FILE* f = fopen(argv[1], "rb");
+    if (!f) {
+      printf("cannot open %s\n", argv[1]);
+      return 1;
+    }
+    std::vector<uint8_t> file(200000);
+    file.resize(fread(&file[0], 1, file.size(), f));
+    fclose(f);
+    g_waves.assign(file.begin() + 32, file.end());
+  }
   TestMainPage();
   TestPagesAndPickup();
   TestFreeze();
@@ -589,6 +628,7 @@ int main() {
   TestWav();
   TestSamples();
   TestLeds();
+  TestWavetables();
   TestGovernor();
   TestAudio();
   if (failures) {

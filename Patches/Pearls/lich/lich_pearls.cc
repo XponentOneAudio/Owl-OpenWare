@@ -162,6 +162,7 @@ bool LichPearls::Init(float sample_rate) {
   last_scale_zone_ = 0;
   last_sample_zone_ = 0;
   fast_blink_ = false;
+  synth_zone_previous_ = false;
   sample_reading_ = false;
   sample_request_ = 0;
   sample_busy_ = false;
@@ -427,7 +428,12 @@ void LichPearls::UpdateControls() {
   // Buffer: stereo, mono, or the wavetable synth (which needs the tables).
   const float buffer = s[KNOB_C].value;
   c.mono = buffer >= 1.0f / 3.0f && buffer < 2.0f / 3.0f;
-  c.synth = synth_available_ && buffer >= 2.0f / 3.0f;
+  const bool synth_zone = buffer >= 2.0f / 3.0f;
+  c.synth = synth_available_ && synth_zone;
+  if (synth_zone && !synth_zone_previous_ && !synth_available_) {
+    Blink(6, true);  // no wavetables: see README.md
+  }
+  synth_zone_previous_ = synth_zone;
   seed_mode_ = Zone(s[KNOB_D].value, SEED_MODE_LAST, seed_mode_);
 
   // Extras (Pearls additions).
