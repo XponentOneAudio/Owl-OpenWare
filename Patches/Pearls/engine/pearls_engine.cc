@@ -43,6 +43,28 @@ using namespace beads;
 using namespace stmlib;
 using namespace std;
 
+// Lich port: the hi-fi processor through a code alias (SetFastCodeOffset).
+// ProcessFast() and all the functions it reaches in hi-fi quality are
+// linked in the Lich's fast code region (tools/fast_sections.py).
+static uintptr_t fast_code_offset = 0;
+
+void SetFastCodeOffset(uintptr_t offset) {
+  fast_code_offset = offset;
+}
+
+typedef void (*ProcessFunction)(
+    Processor*, SeedButtonState, const GateFlags*, const bool*,
+    const ModulatedParameter&, const Parameters&,
+    const Processor::MixParameters&, FloatFrame*, FloatFrame*, size_t);
+
+__attribute__((noinline, noclone)) void ProcessFast(
+    Processor* processor, SeedButtonState seed_state, const GateFlags* seed,
+    const bool* freeze, const ModulatedParameter& d, const Parameters& p,
+    const Processor::MixParameters& m, FloatFrame* in, FloatFrame* out,
+    size_t size) {
+  processor->Process(seed_state, seed, freeze, d, p, m, in, out, size);
+}
+
 namespace {
 
 // Same memory layout as the Beads firmware: 512 kB + 256 kB of delay memory
@@ -749,7 +771,15 @@ void Engine::ProcessAudio(
   processor_->set_max_grains(max_grains_);
   if (processor_->sample_rate() != 32000.0f) {
     processor_->set_gate_output(gate);
-    processor_->Process(seed_state, seed, freeze, d, p, m, in, out, kBlockSize);
+    if (fast_code_offset && processor_->media() == Processor::MEDIA_DIGITAL) {
+      ProcessFunction process = reinterpret_cast<ProcessFunction>(
+          reinterpret_cast<uintptr_t>(&ProcessFast) - fast_code_offset);
+      process(processor_, seed_state, seed, freeze, d, p, m, in, out,
+              kBlockSize);
+    } else {
+      processor_->Process(
+          seed_state, seed, freeze, d, p, m, in, out, kBlockSize);
+    }
     return;
   }
 

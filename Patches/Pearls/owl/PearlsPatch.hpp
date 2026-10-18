@@ -58,6 +58,7 @@ class PearlsPatch : public Patch {
       pearls_.set_wavetables(waves_->getData(), waves_->getSize());
     }
     ok_ = pearls_.Init(getSampleRate());
+    EnableFastCode();
     cycles_per_block_ = 0.0f;
     overloaded_blocks_ = 0;
     skip_block_ = false;
@@ -67,6 +68,7 @@ class PearlsPatch : public Patch {
   }
 
   ~PearlsPatch() {
+    DisableFastCode();
     FinishSampleRead();
     FreeSample();
     pearls_.set_wavetables(NULL, 0);
@@ -301,6 +303,29 @@ class PearlsPatch : public Patch {
     free(ccm);
   }
 
+  // The SRAM1 alias at 0x00000000 (SYSCFG_MEMRMP), through which the hi-fi
+  // processor runs (fetched over the I-Code bus: about 15% faster than over
+  // the System bus). The firmware's vectors are at 0x08010000 (VTOR), and a
+  // reset restores the mapping. (PEARLS_NO_FAST_CODE: not used.)
+  void EnableFastCode() {
+#if defined(__arm__) && !defined(PEARLS_NO_FAST_CODE)
+    volatile uint32_t* memrmp = reinterpret_cast<volatile uint32_t*>(0x40013800);
+    memory_mapping_ = *memrmp;
+    *memrmp = (memory_mapping_ & ~7u) | 3u;
+    __asm__ volatile("dsb\n isb" : : : "memory");
+    pearls::SetFastCodeOffset(0x20000000u);
+#endif
+  }
+
+  void DisableFastCode() {
+#if defined(__arm__) && !defined(PEARLS_NO_FAST_CODE)
+    pearls::SetFastCodeOffset(0);
+    volatile uint32_t* memrmp = reinterpret_cast<volatile uint32_t*>(0x40013800);
+    *memrmp = memory_mapping_;
+    __asm__ volatile("dsb\n isb" : : : "memory");
+#endif
+  }
+
   static __attribute__((noinline, optimize("Os"))) char* Append(
       char* p, const char* s) {
     while (*s) *p++ = *s++;
@@ -443,6 +468,7 @@ class PearlsPatch : public Patch {
   bool ok_;
   float cycles_per_block_;
   Calibration calibration_;
+  uint32_t memory_mapping_;
   int report_blocks_;
   float load_sum_;
   float load_peak_;

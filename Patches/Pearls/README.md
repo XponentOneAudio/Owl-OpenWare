@@ -32,11 +32,16 @@ to twice the Lich's CPU. So on the Lich:
   fits in the fast internal RAM. Compared with Beads' reverb, decay times
   are within 6% and levels within 1 dB, and the 8-12 kHz band is 10 dB
   lower.
-- **The engine works in blocks of 16 frames** (Beads: 12). That divides the
-  Lich's 32-frame audio blocks, so every block does the same work: with
-  12, blocks alternated between three and two engine blocks. The patch
-  works with any OpenWare block size and doesn't change it. A multiple of
-  16 (32, 48, 64...) keeps the load even.
+- **The engine works in blocks of 32 frames** (Beads: 12), the Lich's
+  audio block size, so every block does the same work: with 12, blocks
+  alternated between three and two engine blocks. The patch works with any
+  OpenWare block size and doesn't change it. A multiple of 32 keeps the
+  load even.
+- **The hi-fi processor runs from the fast instruction bus.** The patch
+  maps SRAM1 at address 0 (the chip's remap), where the CPU fetches code
+  over the I-Code bus, and runs the hi-fi quality's code through it (about
+  15% faster than at its own address, measured on a Lich). The firmware
+  doesn't use address 0, and a reset restores the mapping.
 - **Everything else is Beads' DSP, with the same output.** The grains are
   rendered block by block, and silent taps, a silent reverb and repeated
   divisions are skipped. The tests check the output against unmodified
@@ -322,8 +327,8 @@ The governor watches the busiest recent blocks, not the average.
   96-tap polyphase resampler (192 taps on the Nebulae).
 - **Gate timing:** buttons and gates are read once per audio block (0.7 ms
   with OpenWare's default 32-frame blocks).
-- **Control rate:** the engine works in 16-frame blocks (3 kHz) instead of
-  Beads' 12 (4 kHz). Triggers and gates are still placed per sample.
+- **Control rate:** the engine works in 32-frame blocks (1.5 kHz) instead
+  of Beads' 12 (4 kHz). Triggers and gates are still placed per sample.
 - **No saving or memory** (see [Samples](#samples)).
 
 ## Building
@@ -341,6 +346,12 @@ The governor watches the busiest recent blocks, not the average.
   `owl/Makefile` copies the sources into `build/owl-src` first.
 - `make syx` checks each SysEx file by decoding it with OpenWare's own
   `sysex.c` and `crc32.c`.
+- The patch is linked twice: `tools/fast_sections.py` lists the functions
+  the hi-fi processor reaches, which the second link places in SRAM1 with
+  the data they address (`owl/owl2-pearls.ld`), and then checks that
+  nothing they reach or address is outside it.
+  `PEARLS_CPPFLAGS=-DPEARLS_NO_FAST_CODE` builds a patch that runs it from
+  its own address.
 
 | Path | |
 |---|---|

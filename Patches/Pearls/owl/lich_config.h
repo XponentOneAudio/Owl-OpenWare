@@ -34,7 +34,7 @@
 #define PEARLS_PROFILE
 #endif
 #ifndef PEARLS_BLOCK_SIZE
-#define PEARLS_BLOCK_SIZE 16
+#define PEARLS_BLOCK_SIZE 32
 #endif
 
 #include "stmlib/stmlib.h"

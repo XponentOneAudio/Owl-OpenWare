@@ -23,11 +23,13 @@ int _getpid(void) {
 void* pvPortMalloc(size_t size);
 void vPortFree(void* p);
 
-void* malloc(size_t size) {
+// (used: the DSP calls them from assembly, which link time optimisation
+// does not see; see owl/Makefile.)
+__attribute__((used)) void* malloc(size_t size) {
   return pvPortMalloc(size);
 }
 
-void free(void* p) {
+__attribute__((used)) void free(void* p) {
   if (p) {
     vPortFree(p);
   }

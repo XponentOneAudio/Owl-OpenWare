@@ -192,9 +192,17 @@ int main(void) {
   /* As DynamicPatchDefinition: copy, blank the rest of the program. */
   memcpy(PATCHRAM, patch_bin, size);
   /* The STM32F427's SRAM1 alias at 0x00000000 (SYSCFG remap), which the
-     patch can run code through: here a copy of the patch's first 64 kB
-     (the code is not written to). */
-  memcpy((uint8_t*)0x0000c000, patch_bin, size < 0x10000 ? size : 0x10000);
+     patch can run code through: here a copy of the patch's first 64 kB.
+     Its code is not written to, but its data is: the data written through
+     the alias here is not the patch's (on the STM32, the same memory).
+     -DALIAS_BYTES=N: only the first N bytes (to check what runs through
+     it). */
+#ifndef ALIAS_BYTES
+#define ALIAS_BYTES 0x10000
+#endif
+  memset((uint8_t*)0x0000c000, 0, 0x10000);
+  memcpy((uint8_t*)0x0000c000, patch_bin,
+         size < ALIAS_BYTES ? size : ALIAS_BYTES);
   if (size < program_size) memset(PATCHRAM + size, 0, program_size - size);
 
   /* As updateProgramVector (v22.5, Lich). */

@@ -15,7 +15,8 @@ BUILD = build
 # The Lich's DSP options (owl/lich_config.h), with stmlib's desktop code.
 DESKTOP_FLAGS = -O2 -g -Wall -Wno-unused-local-typedefs -DTEST -include cstdio \
 	-DBEADS_NO_HARDWARE_24K -DPEARLS_RESAMPLER_TAPS=96 \
-	-DPEARLS_FILTER_DESIGN_REAL=float -DBEADS_REVERB_DIVIDER=2 -DBEADS_NO_WASTE_CPU -DPEARLS_TRANSFER_CHUNK=256 -DPEARLS_BLOCK_SIZE=16 \
+	-DPEARLS_FILTER_DESIGN_REAL=float -DBEADS_REVERB_DIVIDER=2 -DBEADS_NO_WASTE_CPU -DPEARLS_TRANSFER_CHUNK=256 -DPEARLS_BLOCK_SIZE=32 \
+	-DBEADS_DELAY_CONTROL_RATE=4 -DBEADS_DELAY_TAPS_LINEAR \
 	-I. -Ithird_party/eurorack
 DSP_SRC = third_party/eurorack/beads/dsp/processor.cc third_party/eurorack/beads/dsp/synth.cc \
 	third_party/eurorack/beads/dsp/mu_law.cc third_party/eurorack/beads/dsp/delay_clock.cc \

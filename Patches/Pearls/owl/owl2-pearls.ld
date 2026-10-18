@@ -1,5 +1,10 @@
-/* OwlProgram's Source/owl2.ld (3942f82), with .data's load address
-   aligned: see _sidata. */
+/* OwlProgram's Source/owl2.ld (3942f82), with the patch's data (.data,
+   .got, .bss) moved before its code and the hot code and its constants
+   placed first: the hi-fi processor runs through the SRAM1 alias at
+   0x00000000 (SYSCFG remap, see owl/PearlsPatch.hpp), and its
+   PC-relative data accesses then go through the alias too, so the code
+   and all the data it uses must be in SRAM1, which ends at 0x2001c000
+   (tools/fast_sections.py checks it). */
 /* Entry Point */
 ENTRY(Reset_Handler)
 
@@ -26,6 +31,40 @@ SECTIONS
     . = ALIGN(8);
   } >PATCHRAM /* AT>PATCHFLASH */
 
+  /* Initialized data, in place (the firmware loads the whole program,
+     from _startprog to _endprog). */
+  .data :
+  {
+    . = ALIGN(8);
+    _sdata = .;        /* create a global symbol at data start */
+    *(.data)           /* .data sections */
+    *(.data*)          /* .data* sections */
+    . = ALIGN(8);
+    _edata = .;        /* define a global symbol at data end */
+  } >PATCHRAM
+  _sidata = _sdata;
+
+  .got :
+  {
+    *(.got.plt) *(.igot.plt) *(.got) *(.igot)
+    . = ALIGN(8);
+  } >PATCHRAM
+
+  /* Uninitialized data, zeroed by the startup code (and loaded as zeros:
+     it is inside the program). */
+  .bss :
+  {
+    /* This is used by the startup in order to initialize the .bss secion */
+    _sbss = .;         /* define a global symbol at bss start */
+    __bss_start__ = _sbss;
+    *(.bss)
+    *(.bss*)
+    *(COMMON)
+    . = ALIGN(8);
+    _ebss = .;         /* define a global symbol at bss end */
+    __bss_end__ = _ebss;
+  } >PATCHRAM
+
   /* The program code and other data goes into PATCHRAM */
   .text :
   {
@@ -34,11 +73,18 @@ SECTIONS
     *(.text.Reset_Handler)
     *(.text.startup)
     *(.main*)
-    /* Pearls: code that runs through the SRAM1 alias at 0x00000000
-       (SYSCFG remap, see owl/PearlsPatch.hpp): SRAM1 ends at 0x2001c000. */
+    /* Pearls: the code that runs through the SRAM1 alias, then the DSP's
+       constants. */
     _fast_text_start = .;
     *(.text.fast*)
+    /* owl/Makefile puts tools/fast_sections.py's list after this line. */
+    /* PEARLS_FAST_SECTIONS */
     _fast_text_end = .;
+    *(.rodata._ZN5beads*)
+    *(.rodata._ZN6stmlib*)
+    *(.rodata._ZN6pearls*)
+    *(.rodata.pearls_dsp)
+    _fast_end = .;
     *(.text)           /* .text sections (code) */
     *(.text*)          /* .text* sections (code) */
     *(.rodata)         /* .rodata sections (constants, strings, etc.) */
@@ -92,44 +138,10 @@ SECTIONS
     PROVIDE_HIDDEN (__fini_array_end = .);
   } >PATCHRAM
 
-  /* used by the startup to initialize data */
-  /* Pearls: aligned like .data itself. Unaligned, the load address of
-     .data ends up 4 bytes below its address, and the startup code's
-     forward copy between the two overlapping ranges smears the first word
-     over all of .data (newlib's reent structure among it: the first
-     static destructor registration then writes near address 0). */
   . = ALIGN(8);
-  _sidata = .;
+  _endprog = ABSOLUTE(.);         /* define a global symbol at program end */
 
-  /* Initialized data sections goes into RAM, load LMA copy after code */
-  .data : AT ( _sidata )
-  {
-    . = ALIGN(8);
-    _sdata = .;        /* create a global symbol at data start */
-    *(.data)           /* .data sections */
-    *(.data*)          /* .data* sections */
-    . = ALIGN(8);
-    _edata = .;        /* define a global symbol at data end */
-  } >PATCHRAM
-
-  ASSERT(LOADADDR(.data) == ADDR(.data), "Pearls: .data load address differs from its address")
-  ASSERT(_fast_text_end <= 0x2001c000, "Pearls: .text.fast beyond SRAM1")
-
-  /* Uninitialized data section */
-  . = ALIGN(8);
-  .bss :
-  {
-    _endprog = ABSOLUTE(.);         /* define a global symbol at program end */
-    /* This is used by the startup in order to initialize the .bss secion */
-    _sbss = .;         /* define a global symbol at bss start */
-    __bss_start__ = _sbss;
-    *(.bss)
-    *(.bss*)
-    *(COMMON)
-    . = ALIGN(8);
-    _ebss = .;         /* define a global symbol at bss end */
-    __bss_end__ = _ebss;
-  } >PATCHRAM
+  ASSERT(_fast_end <= 0x2001c000, "Pearls: the fast code and its data go beyond SRAM1")
 
   .pv (NOLOAD) :
   {
