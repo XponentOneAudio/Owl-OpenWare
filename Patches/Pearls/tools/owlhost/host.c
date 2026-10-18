@@ -70,7 +70,10 @@ static int16_t parameters[NOF_PARAMETERS];
 static MemorySegment segments[4];
 static uint32_t program_stack[STACK_SIZE / 4] __attribute__((aligned(8)));
 static int blocks, seconds;
-static int run_seconds = 4;
+#ifndef RUN_SECONDS
+#define RUN_SECONDS 4
+#endif
+static int run_seconds = RUN_SECONDS;
 static double out_energy, out_peak;
 static int out_nan;
 static unsigned leds;
@@ -218,7 +221,20 @@ int main(void) {
     memset(segments[i].location, 0, segments[i].size);
   }
   pv->heapSegments = segments;
+  /* Knobs A to D at noon, or as given (-DKNOB_B=4095: delay mode). */
   for (int i = 0; i < 4; ++i) parameters[i] = 2048;
+#ifdef KNOB_A
+  parameters[0] = KNOB_A;
+#endif
+#ifdef KNOB_B
+  parameters[1] = KNOB_B;
+#endif
+#ifdef KNOB_C
+  parameters[2] = KNOB_C;
+#endif
+#ifdef KNOB_D
+  parameters[3] = KNOB_D;
+#endif
 
   /* Run it on an 8 kB stack, as the firmware's audio task. */
   for (int i = 0; i < STACK_SIZE / 4; ++i) program_stack[i] = 0xa5a5a5a5u;

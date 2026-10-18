@@ -12,6 +12,7 @@
 #include <cstring>
 
 #include "Patch.h"
+#include "message.h"
 #include "lich/lich_pearls.h"
 
 class PearlsPatch : public Patch {
@@ -36,6 +37,7 @@ class PearlsPatch : public Patch {
     sample_read_ = 0;
     // The wavetable synth's tables, stored once in the Lich's flash (see
     // README.md). Without them, everything but synth mode works.
+    Calibrate();
     waves_ = Resource::load("pearls-waves");
     if (waves_ && waves_->hasData()) {
       pearls_.set_wavetables(waves_->getData(), waves_->getSize());
@@ -44,6 +46,9 @@ class PearlsPatch : public Patch {
     cycles_per_block_ = 0.0f;
     overloaded_blocks_ = 0;
     skip_block_ = false;
+    report_blocks_ = 0;
+    load_sum_ = 0.0f;
+    load_peak_ = 0.0f;
   }
 
   ~PearlsPatch() {
@@ -104,10 +109,11 @@ class PearlsPatch : public Patch {
 
     // CPU governor: OpenWare resets the cycle counter before each block.
     if (cycles_per_block_ == 0.0f) {
-      cycles_per_block_ = float(size) * 180e6f / getSampleRate();
+      cycles_per_block_ = float(size) * kCpuHz / getSampleRate();
     }
     const float load = float(getElapsedCycles()) / cycles_per_block_;
     pearls_.ReportLoad(load);
+    Report(load, size);
 
     // Overload guard: a patch that never finishes its blocks in time
     // starves the firmware's lower priority tasks, its watchdog resets the
@@ -122,6 +128,156 @@ class PearlsPatch : public Patch {
   }
 
  private:
+  static constexpr float kCpuHz = 168e6f;  // the Lich's STM32F427
+
+  // Measured once at startup, for the CPU model (tools/m4sim): the extra
+  // cycles of a read from the SDRAM over one from the CCM, at random
+  // addresses and sequentially, the cycles per word of a memcpy() from the
+  // SDRAM, and the cycles per iteration of a loop of 4 dependent fused
+  // multiply-adds. Reported with the load (send_sysex.py --info).
+  struct Calibration {
+    int random_x10, sequential_x10, copy_x10, fma_x10;
+  };
+
+  static __attribute__((noinline)) uint32_t ReadRandom(
+      const uint32_t* p, int shift, int n) {
+    uint32_t x = 1;
+    uint32_t sum = 0;
+    for (int i = 0; i < n; ++i) {
+      x = x * 1664525u + 1013904223u;
+      sum += p[x >> shift];
+    }
+    return sum;
+  }
+
+  static __attribute__((noinline)) uint32_t ReadSequential(
+      const uint32_t* p, uint32_t mask, int n) {
+    uint32_t sum = 0;
+    for (int i = 0; i < n; ++i) {
+      sum += p[uint32_t(i) & mask];
+    }
+    return sum;
+  }
+
+  static __attribute__((noinline)) float Fma(float a, int n) {
+    const float b = 0.9999f;
+    const float c = 0.0001f;
+    for (int i = 0; i < n; ++i) {
+      a = a * b + c;
+      a = a * b + c;
+      a = a * b + c;
+      a = a * b + c;
+    }
+    return a;
+  }
+
+  // The fewest cycles of 3 runs (interrupts only add).
+  template<typename F>
+  __attribute__((noinline)) int Cycles(F f) {
+    int best = 0x7fffffff;
+    for (int k = 0; k < 3; ++k) {
+      const int start = getElapsedCycles();
+      f();
+      best = std::min(best, getElapsedCycles() - start);
+    }
+    return best;
+  }
+
+  __attribute__((noinline, optimize("Os"))) void Calibrate() {
+    static const int kExtWords = 32768;  // 128 kB: too big for the CCM
+    static const int kCcmWords = 1024;
+    static const int kN = 4096;
+    calibration_ = Calibration();
+    uint32_t* ccm = static_cast<uint32_t*>(malloc(kCcmWords * 4));
+    uint32_t* ext = static_cast<uint32_t*>(malloc(kExtWords * 4));
+    if (ccm && ext) {
+      memset(ccm, 0, kCcmWords * 4);
+      memset(ext, 0, kExtWords * 4);
+      volatile uint32_t sink = 0;
+      const int random_ext = Cycles([&] { sink = ReadRandom(ext, 17, kN); });
+      const int random_ccm = Cycles([&] { sink = ReadRandom(ccm, 22, kN); });
+      const int seq_ext = Cycles([&] {
+        sink = ReadSequential(ext, kExtWords - 1, kN); });
+      const int seq_ccm = Cycles([&] {
+        sink = ReadSequential(ccm, kCcmWords - 1, kN); });
+      const int copy = Cycles([&] {
+        for (int i = 0; i < 4; ++i) {
+          memcpy(ccm, ext + i * 8192, kCcmWords * 4);
+        }
+        sink = ccm[7]; });
+      volatile float fsink = 0.0f;
+      const int fma = Cycles([&] { fsink = Fma(1.0f, kN); });
+      (void)sink;
+      (void)fsink;
+      calibration_.random_x10 = (random_ext - random_ccm) * 10 / kN;
+      calibration_.sequential_x10 = (seq_ext - seq_ccm) * 10 / kN;
+      calibration_.copy_x10 = copy * 10 / (4 * kCcmWords);
+      calibration_.fma_x10 = fma * 10 / kN;
+    }
+    free(ext);
+    free(ccm);
+  }
+
+  static __attribute__((noinline, optimize("Os"))) char* Append(
+      char* p, const char* s) {
+    while (*s) *p++ = *s++;
+    return p;
+  }
+
+  static __attribute__((noinline, optimize("Os"))) char* AppendInt(
+      char* p, int v) {
+    if (v < 0) {
+      *p++ = '-';
+      v = -v;
+    }
+    char digits[12];
+    int n = 0;
+    do {
+      digits[n++] = char('0' + v % 10);
+      v /= 10;
+    } while (v);
+    while (n) *p++ = digits[--n];
+    return p;
+  }
+
+  static __attribute__((noinline, optimize("Os"))) char* AppendTenths(
+      char* p, int v_x10) {
+    p = AppendInt(p, v_x10 / 10);
+    *p++ = '.';
+    return AppendInt(p, (v_x10 < 0 ? -v_x10 : v_x10) % 10);
+  }
+
+  // Twice a second: the calibration, and the load (average and peak, in
+  // percent) and grain limit since the last report.
+  __attribute__((noinline, optimize("Os"))) void Report(
+      float load, int size) {
+    load_sum_ += load;
+    load_peak_ = std::max(load_peak_, load);
+    if (++report_blocks_ * size < int(getSampleRate()) / 2) {
+      return;
+    }
+    char* p = message_;
+    p = Append(p, "rnd ");
+    p = AppendTenths(p, calibration_.random_x10);
+    p = Append(p, " seq ");
+    p = AppendTenths(p, calibration_.sequential_x10);
+    p = Append(p, " cpy ");
+    p = AppendTenths(p, calibration_.copy_x10);
+    p = Append(p, " fma ");
+    p = AppendTenths(p, calibration_.fma_x10);
+    p = Append(p, " cpu ");
+    p = AppendInt(p, int(100.0f * load_sum_ / float(report_blocks_)));
+    *p++ = '/';
+    p = AppendInt(p, int(100.0f * load_peak_));
+    p = Append(p, " g ");
+    p = AppendInt(p, pearls_.ui_state().max_grains);
+    *p = '\0';
+    debugMessage(message_);
+    report_blocks_ = 0;
+    load_sum_ = 0.0f;
+    load_peak_ = 0.0f;
+  }
+
   // Samples: resources "pearls-1.wav" to "pearls-8.wav", read from flash a
   // few kB per block (a whole file at once would stall the audio).
   void UpdateSampleLoad() {
@@ -194,6 +350,11 @@ class PearlsPatch : public Patch {
   int gate_;
   bool ok_;
   float cycles_per_block_;
+  Calibration calibration_;
+  int report_blocks_;
+  float load_sum_;
+  float load_peak_;
+  char message_[64];
   static const int kOverloadBlocks = 16;
   int overloaded_blocks_;
   bool skip_block_;

@@ -55,6 +55,7 @@ void DelayController::Init(float sample_rate, int max_delay) {
   
   for (int i = 0; i < NUM_TAPS; ++i) {
     tap_envelope_[i].Init();
+    tap_delay_time_[i] = 0.0f;
   }
   
   position_modulation_.Init(0.1f / sample_rate);
@@ -309,6 +310,7 @@ void DelayController::RenderInternal(
       if (freeze_) {
         for (int i = 0; i < NUM_TAPS; ++i) {
           tap_envelope_[i].Init();
+          tap_delay_time_[i] = 0.0f;
         }
       }
 
@@ -317,6 +319,7 @@ void DelayController::RenderInternal(
         int start = clock_.new_interval_index() * NUM_HEADS;
         for (int i = start; i < start + NUM_HEADS; ++i) {
           tap_envelope_[i].Init();
+          tap_delay_time_[i] = 0.0f;
         }
       }
       
@@ -345,7 +348,11 @@ void DelayController::RenderInternal(
 
         CONSTRAIN(delay_time, kMinDelay, max_delay_);
 
-        tap_envelope_[i].set_phase_increment(1.0f / delay_time);
+        // Lich port: the reciprocal only when the delay changes.
+        if (delay_time != tap_delay_time_[i]) {
+          tap_delay_time_[i] = delay_time;
+          tap_envelope_[i].set_phase_increment(1.0f / delay_time);
+        }
         out->tap[i].delay = int32_t(delay_time * 1024.0f);
         
         const float ratio_fade = tap
@@ -353,7 +360,14 @@ void DelayController::RenderInternal(
             : 1.0f - multiplier_fractional;
         const float base_gain = tap_gain[ratio] * ratio_fade * \
             clock_.gain(interval);
-        out->tap[i].gain = base_gain * tap_envelope_[i].Render(envelope_shape);
+        // Lich port: a silent tap's envelope (never negative) only advances.
+        if (base_gain == 0.0f) {
+          tap_envelope_[i].Advance();
+          out->tap[i].gain = 0.0f;
+        } else {
+          out->tap[i].gain = base_gain * tap_envelope_[i].Render(
+              envelope_shape);
+        }
         if (base_gain > loudest) {
           loudest = base_gain;
           loudest_index = i;

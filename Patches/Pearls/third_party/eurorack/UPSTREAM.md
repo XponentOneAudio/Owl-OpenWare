@@ -65,7 +65,7 @@ Fourth change, pitch quantisation (pearls7):
 ## Lich port changes
 
 Copied from the Nebulae port (QB_Nebulae_V2 branch `ccr-c1f1464e-wcl7nr`,
-commit `cbb6412`), then changed for the Befaco Lich (STM32F427 at 180 MHz,
+commit `cbb6412`), then changed for the Befaco Lich (STM32F427 at 168 MHz,
 against Beads' 400 MHz STM32H7). Unless a macro says otherwise, each change
 gives the same output; `tools/check_block_rendering.sh` checks them against
 an unmodified tree.
@@ -96,3 +96,16 @@ Different output, selected by the Lich build (`owl/lich_config.h`):
   same levels within 1 dB, the 8-12 kHz band 10 dB lower).
 - `BEADS_NO_WASTE_CPU` removes the dummy grain players that Beads uses to
   waste CPU cycles.
+- `multitap_delay.h`, `tap.h`, `delay_line.h`, `granular_processor.h`: the
+  delay mode's taps are rendered a block at a time before the block is
+  written (as the grains), when no tap reads a frame the block writes;
+  each tap's frames are copied from the buffer in one go (burst reads from
+  the SDRAM instead of 4 scattered reads per sample and head). Otherwise
+  (delays near the buffer's length), the same code renders one sample at
+  a time, after each write. Same output.
+- `delay_controller.{h,cc}`: a tap's phase increment (a division) is only
+  computed again when its delay changes, and a silent tap's envelope only
+  advances. Same output.
+- Some functions called once per grain or per block are kept out of line
+  (`noinline`), and the block code is shared by the 8 delay line types,
+  for the patch to fit in the Lich's 144 kB.

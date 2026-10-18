@@ -186,6 +186,14 @@ class TapEnvelope {
     return s;
   }
 
+  // Lich port: Render() without the envelope.
+  inline void Advance() {
+    phase_ += phase_increment_;
+    if (phase_ >= 1.0f) {
+      phase_ -= 1.0f;
+    }
+  }
+
   inline float Render(const Shape& s) {
     const float triangle = phase_ < s.pw
         ? phase_ * s.slope_up
@@ -285,6 +293,7 @@ class DelayController {
   stmlib::HysteresisQuantizer2 numerator_quantizer_[NUM_HEADS];
 
   TapEnvelope tap_envelope_[NUM_TAPS];
+  float tap_delay_time_[NUM_TAPS];  // Lich port: of each phase increment
   
   RandomWalkModulation position_modulation_;
   RandomWalkModulation shape_modulation_;

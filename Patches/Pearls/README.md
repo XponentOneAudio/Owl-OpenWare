@@ -116,6 +116,18 @@ reset forgets, and run `--info` while it plays to see its CPU use.
 The patch guards against overload: after 16 late blocks in a row it
 skips one (a short dropout), so that the firmware keeps running.
 
+`--info` also shows the patch's own report (`message`), refreshed twice
+a second, for instance
+`rnd 31.2 seq 8.4 cpy 2.1 fma 15.0 cpu 92/118 g 8`:
+
+- `rnd`, `seq`: extra cycles of a read from the SDRAM over one from the
+  internal CCM memory, at random addresses and sequentially; `cpy`:
+  cycles per 32-bit word of a copy from the SDRAM; `fma`: cycles of a
+  loop of 4 multiply-adds. Measured once at startup, to calibrate the
+  CPU estimates below.
+- `cpu`: the load in percent, average and busiest block over the last
+  half second; `g`: the governor's grain limit.
+
 ## Panel
 
 The Lich has four knobs, each with a CV input added to it (0-10 V), and two
@@ -263,8 +275,11 @@ OpenWare gives patches no way to write the flash.
 ## CPU
 
 Estimated with `tools/m4sim`, a QEMU Cortex-M4 with the Lich's memory
-timings, as a share of the 180 MHz CPU. These are estimates (within about
-±25%), not measurements.
+timings, as a share of a 180 MHz CPU. These are estimates, not
+measurements, and too low: the Lich runs at 168 MHz (7% less), and the
+first measurement on a Lich, 147% in delay mode, was about 1.5 times the
+estimate (the SDRAM is probably slower than modelled: the patch now
+measures it, see above).
 
 Each audio block must finish within its time, so the busiest block (the
 peak) matters more than the average.

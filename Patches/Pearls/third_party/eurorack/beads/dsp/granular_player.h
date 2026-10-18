@@ -164,7 +164,7 @@ class GranularPlayer {
     return num_active_grains;
   }
   
-  inline void ComputeGrainAmplitudeAndPan(
+  __attribute__((noinline)) void ComputeGrainAmplitudeAndPan(
       const TriggerGenerator::Output& trigger,
       const Parameters& p,
       float* amplitude,
@@ -190,7 +190,7 @@ class GranularPlayer {
     grain_interval_ += num_samples;
   }
   
-  inline void SortGrainList(bool monophonic_mode) {
+  __attribute__((noinline)) void SortGrainList(bool monophonic_mode) {
     // Whenever a new grain is started, we subject the first N grains to various
     // crossfades, so they terminate quickly in case a new grain is started
     // afterwards.

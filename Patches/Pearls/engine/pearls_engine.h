@@ -231,7 +231,8 @@ class Engine {
   void RenderBlock();
   void UpdatePitch();
   void UpdateTapClock(bool* pulses);
-  void ContinueTransfer();
+  // Sample loading and saving: once per block, kept small.
+  __attribute__((noinline, optimize("Os"))) void ContinueTransfer();
   void ResetStreaming();
   void ProcessAudio32kStreaming(
       beads::SeedButtonState seed_state,

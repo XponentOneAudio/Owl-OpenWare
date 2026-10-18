@@ -1,6 +1,6 @@
 #!/bin/sh
 # run.sh [patch.bin]: runs the patch binary under QEMU with host.c standing
-# in for the firmware.
+# in for the firmware. HOSTFLAGS="-DKNOB_B=4095" sets knobs (here: delay mode).
 set -e
 cd "$(dirname "$0")"
 T=${TOOLROOT:-}

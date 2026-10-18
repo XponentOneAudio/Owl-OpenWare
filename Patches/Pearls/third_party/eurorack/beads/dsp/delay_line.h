@@ -30,6 +30,7 @@
 #define BEADS_DSP_DELAY_LINE_H_
 
 #include <algorithm>
+#include <cstring>
 #include <cassert>
 
 #include "stmlib/stmlib.h"
@@ -158,6 +159,93 @@ enum Interpolation {
   INTERPOLATION_LINEAR,
   INTERPOLATION_HERMITE
 };
+
+// Lich port: DelayLine::ReadAt()'s Hermite interpolation, shared with
+// DelayLine::ReadHermiteBlock(), and the latter's loop (not a template, so
+// that the 8 delay line types share it).
+static inline __attribute__((always_inline)) FloatFrame HermiteInterpolate(
+    const FloatFrame* x, float t) {
+  const FloatFrame c = (x[2] - x[0]) * 0.5f;
+  const FloatFrame v = x[1] - x[2];
+  const FloatFrame w = c + v;
+  const FloatFrame a = w + v + (x[3] - x[1]) * 0.5f;
+  const FloatFrame b_neg = w + a;
+  return (((a * t) - b_neg) * t + c) * t + x[1];
+}
+
+// The longest block (the engine's 16 frames) and the frames read through one
+// window: few enough for the stack (the firmware gives the patch 8 kB).
+enum {
+  kMaxHermiteBlock = 16,
+  kHermiteWindowFrames = 48
+};
+
+typedef void (*HermiteBlockReader)(
+    const void* delay_line,
+    const int32_t* position,
+    const int* write_ptr,
+    const bool* active,
+    FloatFrame* out,
+    size_t size);
+
+typedef void (*WindowLoader)(
+    const void* delay_line, int first, int count, FloatFrame* frames);
+
+// DelayLine::ReadHermiteBlockOf(): the frame index and fraction each sample
+// starts from (as ReadAt<INTERPOLATION_HERMITE>), then the interpolation
+// over windows of frames that load() copies from the delay line. One window
+// when the block reads few enough frames (the case of the delay taps), else
+// as many as needed.
+__attribute__((noinline, noclone)) inline void HermiteBlock(
+    WindowLoader load,
+    const void* delay_line,
+    int max_delay,
+    const int32_t* position,
+    const int* write_ptr,
+    const bool* active,
+    FloatFrame* out,
+    size_t size) {
+  int index[kMaxHermiteBlock];
+  float fractional[kMaxHermiteBlock];
+  int lo = max_delay + 4;
+  int hi = -1;
+  for (size_t s = 0; s < size; ++s) {
+    if (!active[s]) {
+      continue;
+    }
+    const int32_t delay_integral = (position[s] >> 10) + max_delay - 1;
+    fractional[s] = float(position[s] & 1023) / 1024.0f;
+    const int i = (write_ptr[s] + delay_integral) % max_delay;
+    index[s] = i;
+    lo = std::min(lo, i);
+    hi = std::max(hi, i);
+  }
+  if (hi < 0) {
+    return;
+  }
+  FloatFrame frames[kHermiteWindowFrames];
+  int first = 0;
+  int count = 0;
+  if (hi - lo + 4 <= kHermiteWindowFrames) {
+    first = lo;
+    count = hi - lo + 4;
+    load(delay_line, first, count, frames);
+  }
+  for (size_t s = 0; s < size; ++s) {
+    if (!active[s]) {
+      continue;
+    }
+    const int i = index[s];
+    if (i < first || i + 4 > first + count) {
+      // A window around frame i: the next samples read close by, before or
+      // after it. Frames 0 to max_delay + 3 exist (the interpolation tail).
+      first = std::max(0, i - (kHermiteWindowFrames - 4) / 2);
+      count = std::min(int(kHermiteWindowFrames), max_delay + 4 - first);
+      load(delay_line, first, count, frames);
+    }
+    out[s] = HermiteInterpolate(&frames[i - first], fractional[s]);
+  }
+}
 
 template<
     Resolution resolution,
@@ -381,16 +469,59 @@ class DelayLine {
     } else {
       FloatFrame x[4];
       LoadQuad(i, x);
-      
-      const FloatFrame c = (x[2] - x[0]) * 0.5f;
-      const FloatFrame v = x[1] - x[2];
-      const FloatFrame w = c + v;
-      const FloatFrame a = w + v + (x[3] - x[1]) * 0.5f;
-      const FloatFrame b_neg = w + a;
-      const float t = delay_fractional;
-      value = (((a * t) - b_neg) * t + c) * delay_fractional + x[1];
+      value = HermiteInterpolate(x, delay_fractional);
     }
     return value;
+  }
+
+  // Lich port: Read<INTERPOLATION_HERMITE>(position[s]) at write position
+  // write_ptr[s], for the samples s of a block whose active[s] is set (see
+  // ReadHermiteBlockOf).
+  inline void ReadHermiteBlock(
+      const int32_t* position,
+      const int* write_ptr,
+      const bool* active,
+      FloatFrame* out,
+      size_t size) const {
+    ReadHermiteBlockOf(this, position, write_ptr, active, out, size);
+  }
+
+  // The same, for code that does not know the delay line's type. The frames
+  // are read through a window of up to kHermiteWindowFrames consecutive
+  // frames, copied from the buffer in one go (sequential reads, which the
+  // Lich's SDRAM serves in bursts, instead of 4 scattered reads per sample).
+  // Same values as ReadAt().
+  static void ReadHermiteBlockOf(
+      const void* delay_line,
+      const int32_t* position,
+      const int* write_ptr,
+      const bool* active,
+      FloatFrame* out,
+      size_t size) {
+    HermiteBlock(&LoadWindowOf, delay_line, max_delay, position, write_ptr,
+                 active, out, size);
+  }
+
+  // Frames first to first + count - 1 (count <= kHermiteWindowFrames).
+  static void LoadWindowOf(
+      const void* delay_line, int first, int count, FloatFrame* frames) {
+    const DelayLine* d = static_cast<const DelayLine*>(delay_line);
+    const int bundle = ItemType::bundle_size;
+    const int first_item = first / bundle;
+    const int last_item = (first + count - 1) / bundle;
+    ItemType items[kHermiteWindowFrames + 1];
+    for (int n = first_item; n <= last_item; ) {
+      const size_t offset = size_t(n) % d->items_per_bank();
+      const size_t bank = size_t(n) / d->items_per_bank();
+      const int items_count = std::min(
+          last_item - n + 1, int(d->items_per_bank() - offset));
+      memcpy(&items[n - first_item], &d->items_[bank][offset],
+             items_count * sizeof(ItemType));
+      n += items_count;
+    }
+    for (int f = first; f < first + count; ++f) {
+      frames[f - first] = items[f / bundle - first_item].value(f % bundle);
+    }
   }
   
   template<Interpolation interpolation>

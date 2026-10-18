@@ -128,7 +128,7 @@ struct RandomizedParameter {
     }
   }
   
-  inline float value(
+  __attribute__((noinline)) float value(
       RandomWalkModulation* modulation,
       size_t step_size,
       float range,
@@ -172,7 +172,7 @@ struct RandomizedParameter {
     return value(NULL, 0, 1.0f, true);
   }
   
-  inline float pitch_value() const {
+  __attribute__((noinline)) float pitch_value() const {
     return stmlib::SemitonesToRatio(
         QuantizeSemitones(value(NULL, 0, 24.0f, false), scale_mask));
   }

@@ -326,7 +326,10 @@ void Engine::ContinueTransfer() {
       return;
     }
     const float rate = processor_->buffer_sample_rate();
-    const double step = double(transfer_source_rate_) / double(rate);
+    // Source frames per buffer frame, in 32.32 fixed point (no double
+    // precision: software floating point on the Lich, 3 kB of code).
+    const uint64_t step =
+        (uint64_t(uint32_t(transfer_source_rate_)) << 32) / uint32_t(rate);
     if (!transfer_started_) {
       processor_->TrimBuffer();
       transfer_rate_ = rate;
@@ -335,7 +338,7 @@ void Engine::ContinueTransfer() {
       // Leave room for the interpolation tail: a full buffer would wrap.
       const size_t capacity = size_t(processor_->buffer_capacity()) - 8;
       const size_t converted = size_t(
-          double(transfer_source_frames_ - 1) / step) + 1;
+          (uint64_t(transfer_source_frames_ - 1) << 32) / step) + 1;
       transfer_target_frames_ = min(capacity, converted);
       transfer_started_ = true;
     }
@@ -343,13 +346,13 @@ void Engine::ContinueTransfer() {
         transfer_target_frames_, transfer_frames_ + kTransferChunk);
     const size_t last = transfer_source_frames_ - 1;
     for (; transfer_frames_ < end; ++transfer_frames_) {
-      const double position = double(transfer_frames_) * step;
-      const size_t i = min(size_t(position), last);
+      const uint64_t position = uint64_t(transfer_frames_) * step;
+      const size_t i = min(size_t(position >> 32), last);
       FloatFrame frame;
-      if (step > 1.0) {
+      if (step > (uint64_t(1) << 32)) {
         // Downsampling: average the source frames this frame covers.
         const size_t j = min(
-            max(size_t(position + step), i + 1), last + 1);
+            max(size_t((position + step) >> 32), i + 1), last + 1);
         float l = 0.0f, r = 0.0f;
         for (size_t k = i; k < j; ++k) {
           float kl, kr;
@@ -362,7 +365,9 @@ void Engine::ContinueTransfer() {
       } else {
         // Upsampling: linear interpolation.
         const size_t next = min(i + 1, last);
-        const float t = float(position - double(i));
+        const float t = size_t(position >> 32) > last
+            ? 0.0f
+            : float(uint32_t(position)) * (1.0f / 4294967296.0f);
         float il, ir, nl, nr;
         load_reader_(load_context_, i, &il, &ir);
         load_reader_(load_context_, next, &nl, &nr);
