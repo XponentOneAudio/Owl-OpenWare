@@ -45,10 +45,21 @@ to twice the Lich's CPU. So on the Lich:
 ## Installing
 
 The `prebuilt/` directory has everything as SysEx files. Send them to the
-Lich over USB with any SysEx tool, for example SysEx Librarian (macOS),
-MIDI-OX (Windows), `amidi -p hw:1,0,0 -s file.syx` (Linux), or Rebel
-Technology's FirmwareSender. If a transfer fails, add a few milliseconds
-between messages in the tool's settings.
+Lich over USB, one file at a time. Each file is a few hundred SysEx
+messages, which must not be sent too fast:
+
+- **`tools/send_sysex.py`** paces them (10 ms apart). It needs Python 3 and
+  `pip install mido python-rtmidi`; then run
+  `python3 tools/send_sysex.py prebuilt/pearls-lich.syx`. `--list` shows
+  the MIDI ports, `--port` picks one (default: the first with "OWL" in its
+  name), and `--delay 20` slows down further.
+- **MIDI-OX** (Windows): "SysEx: no buffers available" means its output
+  buffers are too few or too small. In View > SysEx, open Sysex >
+  Configure: set the low level output buffers to 64 buffers of 512 bytes,
+  and "Delay after F7" to 10 ms (20 if a transfer still fails). Close
+  other programs using the Lich's MIDI port first.
+- **Others:** SysEx Librarian (macOS) and `amidi -p hw:1,0,0 -s file.syx`
+  (Linux) also work. Add a delay between messages if the transfer fails.
 
 1. **`pearls-waves.syx`** (once). It stores the wavetables of the synth
    mode in the Lich's flash, as a 100 kB resource named `pearls-waves`.
@@ -281,5 +292,5 @@ The governor watches the busiest recent blocks, not the average.
 | `tools/check_block_rendering.sh` | the DSP changes against unmodified Beads |
 | `tools/m4sim/` | the Cortex-M4 CPU estimates (QEMU plugin and benchmark) |
 | `tools/reverb_compare.*` | the 24 kHz reverb against Beads' |
-| `tools/make_sysex.py`, `make_sample_syx.py`, `make_wavetable_resource.py`, `check_sysex.c` | SysEx and resources |
+| `tools/make_sysex.py`, `make_sample_syx.py`, `make_wavetable_resource.py`, `check_sysex.c`, `send_sysex.py` | SysEx and resources |
 | `prebuilt/` | the SysEx files and `BUILD_INFO.txt` |
