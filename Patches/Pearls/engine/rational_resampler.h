@@ -59,6 +59,7 @@ class RationalResampler {
   void Init(double cutoff_d, double kaiser_beta_d) {
     typedef PEARLS_FILTER_DESIGN_REAL Real;
     static_assert(num_taps % L == 0, "num_taps must be divisible by L");
+    static_assert(TAPS_PER_PHASE % 4 == 0, "4 taps at a time (Dot)");
     const Real pi = Real(3.14159265358979323846);
     const Real cutoff = Real(cutoff_d);
     const Real kaiser_beta = Real(kaiser_beta_d);
@@ -75,16 +76,17 @@ class RationalResampler {
           i0_beta;
       // Gain of L compensates for the zero-stuffing.
       const Real h = sinc * window * Real(L);
-      // Store per phase, reversed, for a straight dot product.
+      // Store per phase, the oldest sample's tap first, for a straight dot
+      // product with the history (Dot).
       const int phase = i % L;
       const int q = i / L;
-      phase_taps_[phase][q] = static_cast<float>(h);
+      phase_taps_[phase][TAPS_PER_PHASE - 1 - q] = static_cast<float>(h);
     }
     Reset();
   }
 
   void Reset() {
-    std::fill(&history_[0][0], &history_[0][0] + 2 * kBufferSize, 0.0f);
+    std::fill(&history_[0], &history_[2 * kBufferSize], 0.0f);
     offset_ = 0;
   }
 
@@ -97,32 +99,16 @@ class RationalResampler {
       const float* in_l, const float* in_r,
       float* out_l, float* out_r,
       size_t in_size) {
-    const int h = TAPS_PER_PHASE;
-    std::copy(in_l, in_l + in_size, &history_[0][h]);
-    std::copy(in_r, in_r + in_size, &history_[1][h]);
-
+    Push(in_l, in_r, in_size);
     const size_t upsampled_size = in_size * L;
     size_t n = 0;
     size_t j = offset_;
     for (; j < upsampled_size; j += M) {
-      const int phase = j % L;
-      const int newest = h + int(j / L);
-      const float* taps = phase_taps_[phase];
-      float acc_l = 0.0f;
-      float acc_r = 0.0f;
-      for (int q = 0; q < h; ++q) {
-        acc_l += taps[q] * history_[0][newest - q];
-        acc_r += taps[q] * history_[1][newest - q];
-      }
-      out_l[n] = acc_l;
-      out_r[n] = acc_r;
+      Render(j, &out_l[n], &out_r[n]);
       ++n;
     }
     offset_ = j - upsampled_size;
-    for (int c = 0; c < 2; ++c) {
-      std::copy(
-          &history_[c][in_size], &history_[c][in_size + h], &history_[c][0]);
-    }
+    Shift(in_size);
     return n;
   }
 
@@ -134,35 +120,14 @@ class RationalResampler {
       const float* in_l, const float* in_r,
       float* out_l, float* out_r,
       size_t in_size) {
-    const int h = TAPS_PER_PHASE;
-    std::copy(in_l, in_l + in_size, &history_[0][h]);
-    std::copy(in_r, in_r + in_size, &history_[1][h]);
-
+    Push(in_l, in_r, in_size);
     const size_t upsampled_size = in_size * L;
     size_t n = 0;
     for (size_t j = 0; j < upsampled_size; j += M) {
-      const int phase = j % L;
-      // Index (in the history buffer) of the newest input sample that
-      // contributes to this output.
-      const int newest = h + int(j / L);
-      const float* taps = phase_taps_[phase];
-      float acc_l = 0.0f;
-      float acc_r = 0.0f;
-      for (int q = 0; q < h; ++q) {
-        acc_l += taps[q] * history_[0][newest - q];
-        acc_r += taps[q] * history_[1][newest - q];
-      }
-      out_l[n] = acc_l;
-      out_r[n] = acc_r;
+      Render(j, &out_l[n], &out_r[n]);
       ++n;
     }
-
-    // Keep the last TAPS_PER_PHASE samples for the next block. The newest
-    // tap can reach index h + in_size - 1, the oldest h + in_size - h.
-    for (int c = 0; c < 2; ++c) {
-      std::copy(
-          &history_[c][in_size], &history_[c][in_size + h], &history_[c][0]);
-    }
+    Shift(in_size);
     return n;
   }
 
@@ -192,6 +157,80 @@ class RationalResampler {
     return sum;
   }
 
+  // The history holds the last TAPS_PER_PHASE input frames, then the
+  // block's, interleaved (left, right).
+  inline void Push(const float* in_l, const float* in_r, size_t in_size) {
+    float* x = &history_[2 * TAPS_PER_PHASE];
+    for (size_t i = 0; i < in_size; ++i) {
+      x[2 * i] = in_l[i];
+      x[2 * i + 1] = in_r[i];
+    }
+  }
+
+  // Keeps the last TAPS_PER_PHASE frames for the next block. The newest tap
+  // can reach frame h + in_size - 1, the oldest h + in_size - h.
+  inline void Shift(size_t in_size) {
+    std::copy(
+        &history_[2 * in_size], &history_[2 * (in_size + TAPS_PER_PHASE)],
+        &history_[0]);
+  }
+
+  // Output at j on the intermediate grid: the phase's taps against the
+  // TAPS_PER_PHASE frames up to the newest, h + j / L.
+  inline void Render(size_t j, float* out_l, float* out_r) const {
+    const int oldest = int(j / L) + 1;
+    Dot(phase_taps_[j % L], &history_[2 * oldest], out_l, out_r);
+  }
+
+  // Lich port: 4 taps at a time, with two partial sums per channel. On the
+  // Cortex-M4, in assembly: block loads, and multiplies and adds (1 cycle
+  // each) rather than multiply-adds (3 cycles, which -ffast-math would
+  // contract them into).
+  static inline void Dot(
+      const float* t, const float* x, float* out_l, float* out_r) {
+    float l0 = 0.0f, r0 = 0.0f, l1 = 0.0f, r1 = 0.0f;
+#if defined(__arm__) && defined(__ARM_FP)
+    int n = TAPS_PER_PHASE;
+    __asm__(
+        "1:\n"
+        "  vldmia %[t]!, {s0-s3}\n"
+        "  vldmia %[x]!, {s4-s11}\n"
+        "  vmul.f32 s12, s0, s4\n"
+        "  vmul.f32 s13, s0, s5\n"
+        "  vmul.f32 s14, s1, s6\n"
+        "  vmul.f32 s15, s1, s7\n"
+        "  vadd.f32 %[l0], %[l0], s12\n"
+        "  vadd.f32 %[r0], %[r0], s13\n"
+        "  vadd.f32 %[l1], %[l1], s14\n"
+        "  vadd.f32 %[r1], %[r1], s15\n"
+        "  vmul.f32 s12, s2, s8\n"
+        "  vmul.f32 s13, s2, s9\n"
+        "  vmul.f32 s14, s3, s10\n"
+        "  vmul.f32 s15, s3, s11\n"
+        "  vadd.f32 %[l0], %[l0], s12\n"
+        "  vadd.f32 %[r0], %[r0], s13\n"
+        "  vadd.f32 %[l1], %[l1], s14\n"
+        "  vadd.f32 %[r1], %[r1], s15\n"
+        "  subs %[n], %[n], #4\n"
+        "  bne 1b\n"
+        : [t] "+r"(t), [x] "+r"(x), [n] "+r"(n),
+          [l0] "+t"(l0), [r0] "+t"(r0), [l1] "+t"(l1), [r1] "+t"(r1)
+        :
+        : "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10",
+          "s11", "s12", "s13", "s14", "s15", "cc", "memory");
+#else
+    for (int q = 0; q < TAPS_PER_PHASE; q += 4) {
+      l0 += t[q] * x[0] + t[q + 2] * x[4];
+      r0 += t[q] * x[1] + t[q + 2] * x[5];
+      l1 += t[q + 1] * x[2] + t[q + 3] * x[6];
+      r1 += t[q + 1] * x[3] + t[q + 3] * x[7];
+      x += 8;
+    }
+#endif
+    *out_l = l0 + l1;
+    *out_r = r0 + r1;
+  }
+
   static PEARLS_FILTER_DESIGN_REAL BesselI0(PEARLS_FILTER_DESIGN_REAL x) {
     typedef PEARLS_FILTER_DESIGN_REAL Real;
     Real sum = 1;
@@ -211,7 +250,7 @@ class RationalResampler {
 
   float phase_taps_[L][TAPS_PER_PHASE];
   size_t offset_;
-  float history_[2][kBufferSize];
+  float history_[2 * kBufferSize];
 };
 
 }  // namespace pearls
