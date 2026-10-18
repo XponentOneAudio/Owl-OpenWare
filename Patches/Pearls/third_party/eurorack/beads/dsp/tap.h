@@ -38,6 +38,15 @@
 
 namespace beads {
 
+// Lich port: BEADS_DELAY_TAPS_LINEAR reads the delay taps with linear
+// interpolation instead of Hermite (2 frames instead of 4, a few operations
+// instead of a dozen; a little darker).
+#ifdef BEADS_DELAY_TAPS_LINEAR
+const Interpolation kTapInterpolation = INTERPOLATION_LINEAR;
+#else
+const Interpolation kTapInterpolation = INTERPOLATION_HERMITE;
+#endif
+
 template<int32_t window_size>
 class Tap {
  public:
@@ -61,7 +70,7 @@ class Tap {
     if (window_size == 1) {
       // Lich port: a silent tap reads nothing (same output).
       if (gain != 0.0f) {
-        *out += gain * delay_line->template Read<INTERPOLATION_HERMITE>(delay);
+        *out += gain * delay_line->template Read<kTapInterpolation>(delay);
       }
       return;
     }
@@ -86,11 +95,46 @@ class Tap {
     const float phase = static_cast<float>(phase_) / float(full_window_size);
     const float triangle = phase < 0.5f ? 2.0f * phase : 2.0f - 2.0f * phase;
     
-    const FloatFrame head_1 = delay_line->template Read<INTERPOLATION_HERMITE>(
+    const FloatFrame head_1 = delay_line->template Read<kTapInterpolation>(
           -phase_ + delay);
-    const FloatFrame head_2 = delay_line->template Read<INTERPOLATION_HERMITE>(
+    const FloatFrame head_2 = delay_line->template Read<kTapInterpolation>(
           -((phase_ + half_window_size) % full_window_size) + delay);
     
+    *out += (head_2 + (head_1 - head_2) * triangle) * gain;
+  }
+
+  // Lich port: Render() in two steps, for MultitapDelay::Render (same
+  // output): the phase, for any tap with a delay, then the read, for a tap
+  // with a gain.
+  inline void Advance(int32_t increment) {
+    const int32_t full_window_size = 1024 * window_size;
+    phase_ += increment;
+    if (phase_ >= full_window_size) {
+      phase_ -= full_window_size;
+    } else if (phase_ < 0) {
+      phase_ += full_window_size;
+    }
+  }
+
+  template<typename DelayLineType>
+  inline void RenderAdvanced(
+      const DelayLineType* delay_line,
+      int32_t delay,
+      float gain,
+      FloatFrame* out) {
+    if (window_size == 1) {
+      *out += gain * delay_line->template Read<kTapInterpolation>(delay);
+      return;
+    }
+    const int32_t full_window_size = 1024 * window_size;
+    const int32_t half_window_size = full_window_size >> 1;
+    delay = std::max(full_window_size + 1, delay + half_window_size);
+    const float phase = static_cast<float>(phase_) / float(full_window_size);
+    const float triangle = phase < 0.5f ? 2.0f * phase : 2.0f - 2.0f * phase;
+    const FloatFrame head_1 = delay_line->template Read<kTapInterpolation>(
+          -phase_ + delay);
+    const FloatFrame head_2 = delay_line->template Read<kTapInterpolation>(
+          -((phase_ + half_window_size) % full_window_size) + delay);
     *out += (head_2 + (head_1 - head_2) * triangle) * gain;
   }
   

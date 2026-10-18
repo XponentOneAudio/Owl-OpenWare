@@ -34,6 +34,11 @@
 
 #include "engine/pearls_profile.h"  // Lich port
 
+// Lich port: see owl/lich_config.h.
+#ifndef PEARLS_COLD
+#define PEARLS_COLD
+#endif
+
 namespace beads {
 
 const float kDelayModeTransitionTime = 1.5f;  // seconds
@@ -42,7 +47,7 @@ const float kDelayModeFadeTime = 0.75f;  // seconds
 using namespace std;
 using namespace stmlib;
 
-void Processor::Init(
+PEARLS_COLD void Processor::Init(
     uint8_t* buffers[],
     uint16_t* reverb_buffer) {
   processor_digital_.Init(48000.0f, buffers);
@@ -69,7 +74,7 @@ void Processor::Init(
   delay_mode_transition_ = -kDelayModeTransitionTime;
 }
 
-void Processor::Configure(Media media, bool mono) {
+PEARLS_COLD void Processor::Configure(Media media, bool mono) {
   media_ = media;
   mono_ = mono;
   

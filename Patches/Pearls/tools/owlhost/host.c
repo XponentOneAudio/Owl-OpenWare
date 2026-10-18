@@ -4,7 +4,8 @@
    of the firmware's audio task, the resource service call. It reports
    faults with their address, the stack used, and the output level.
 
-   Memory: patch RAM at 0x2000c000 (144 kB, as on the Lich), "CCM" at
+   Memory: patch RAM at 0x2000c000 (144 kB, as on the Lich), a copy of its
+   first 64 kB at 0x0000c000 (the SRAM1 alias), "CCM" at
    0x20200000 (64 kB), "SDRAM" at 0x21000000 (8 MB), this host's own RAM
    above 0x20300000. */
 #include <stdint.h>
@@ -190,6 +191,10 @@ int main(void) {
   }
   /* As DynamicPatchDefinition: copy, blank the rest of the program. */
   memcpy(PATCHRAM, patch_bin, size);
+  /* The STM32F427's SRAM1 alias at 0x00000000 (SYSCFG remap), which the
+     patch can run code through: here a copy of the patch's first 64 kB
+     (the code is not written to). */
+  memcpy((uint8_t*)0x0000c000, patch_bin, size < 0x10000 ? size : 0x10000);
   if (size < program_size) memset(PATCHRAM + size, 0, program_size - size);
 
   /* As updateProgramVector (v22.5, Lich). */

@@ -8,6 +8,11 @@
 
 #include <cstring>
 
+// Lich port: see owl/lich_config.h.
+#ifndef PEARLS_COLD
+#define PEARLS_COLD
+#endif
+
 namespace pearls {
 namespace lich {
 
@@ -48,7 +53,7 @@ inline float Sample(const WavInfo& w, const uint8_t* p) {
 
 }  // namespace
 
-bool ParseWav(const void* file, size_t size, WavInfo* info) {
+PEARLS_COLD bool ParseWav(const void* file, size_t size, WavInfo* info) {
   const uint8_t* p = static_cast<const uint8_t*>(file);
   if (!p || size < 12 || memcmp(p, "RIFF", 4) || memcmp(p + 8, "WAVE", 4)) {
     return false;

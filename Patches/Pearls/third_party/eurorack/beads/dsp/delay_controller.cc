@@ -59,8 +59,16 @@ void DelayController::Init(float sample_rate, int max_delay) {
   }
   taps_valid_ = false;
   envelope_shape_valid_ = false;
+#if BEADS_DELAY_CONTROL_RATE > 1
+  control_countdown_ = 0;
+  for (int i = 0; i < NUM_TAPS; ++i) {
+    ramp_gain_[i] = ramp_step_[i] = 0.0f;
+  }
+#endif  // BEADS_DELAY_CONTROL_RATE
   ratio_density_ = -1.0f;
   ratio_fm_ = -1.0f;
+  interval_density_ = -1.0f;
+  interval_fm_ = -1.0f;
   
   position_modulation_.Init(0.1f / sample_rate);
   shape_modulation_.Init(0.1f / sample_rate);
@@ -232,14 +240,19 @@ void DelayController::RenderInternal(
       tap_gain[0] = ratio_tap_gain_[0];
       tap_gain[1] = ratio_tap_gain_[1];
     } else {
-      const float new_interval = max(
-          float(kMinDelay),
-          fm * float(max_delay_) * \
-              SemitonesToRatio(-fabsf(density - 0.5f) * 216.0f));
-      float lp_coefficient = 10.0f / new_interval;
-      CONSTRAIN(lp_coefficient, 0.005f, 0.7f);
+      // Lich port: only when density or FM change (same values).
+      if (density != interval_density_ || fm != interval_fm_) {
+        interval_density_ = density;
+        interval_fm_ = fm;
+        interval_ = max(
+            float(kMinDelay),
+            fm * float(max_delay_) * \
+                SemitonesToRatio(-fabsf(density - 0.5f) * 216.0f));
+        interval_lp_coefficient_ = 10.0f / interval_;
+        CONSTRAIN(interval_lp_coefficient_, 0.005f, 0.7f);
+      }
       
-      clock_.Update(new_interval, lp_coefficient);
+      clock_.Update(interval_, interval_lp_coefficient_);
 
       tap_ratio[0] = 1.00f;
       tap_ratio[1] = 0.77f;
@@ -337,7 +350,35 @@ void DelayController::RenderInternal(
         }
         taps_valid_ = false;
       }
-      
+
+#if BEADS_DELAY_CONTROL_RATE > 1
+      // Lich port: the taps are only worked out every
+      // BEADS_DELAY_CONTROL_RATE samples (control_countdown_); in between,
+      // each tap's gain ramps towards its value at the next update. The
+      // envelopes are straight lines in their phase, so the ramps follow
+      // them, except across a corner. The clock runs every sample, and a
+      // retrig or a freeze change (taps_valid_ false) updates at once.
+      if (taps_valid_ && control_countdown_ > 0) {
+        --control_countdown_;
+        ONE_POLE(multiplier_lp_, slice_modulation, 0.01f);
+        for (int i = 0; i < NUM_TAPS; ++i) {
+          tap_envelope_[i].Advance();
+          ramp_gain_[i] += ramp_step_[i];
+          out->tap[i].delay = taps_delay_[i];
+          out->tap[i].gain = ramp_gain_[i];
+        }
+        out->gate = tap_envelope_[taps_loudest_].phase() < 0.5f;
+        freeze_ = *freeze;
+        if (external_input) {
+          ++external_input;
+        }
+        ++freeze;
+        ++out;
+        continue;
+      }
+      control_countdown_ = BEADS_DELAY_CONTROL_RATE - 1;
+#endif  // BEADS_DELAY_CONTROL_RATE
+
       ONE_POLE(multiplier_lp_, slice_modulation, 0.01f);
       float multiplier = multiplier_lp_ * 15.0f + 1.0f;
       CONSTRAIN(multiplier, 1.0f, 16.0f);
@@ -437,6 +478,14 @@ void DelayController::RenderInternal(
           out->tap[i].gain = base_gain * tap_envelope_[i].Render(
               envelope_shape);
         }
+#if BEADS_DELAY_CONTROL_RATE > 1
+        // The ramp to the gain at the next update.
+        ramp_gain_[i] = out->tap[i].gain;
+        ramp_step_[i] = base_gain == 0.0f ? 0.0f : (base_gain *
+            tap_envelope_[i].Value(
+                envelope_shape, BEADS_DELAY_CONTROL_RATE - 1) -
+            ramp_gain_[i]) * (1.0f / float(BEADS_DELAY_CONTROL_RATE));
+#endif  // BEADS_DELAY_CONTROL_RATE
       }
       out->gate = tap_envelope_[taps_loudest_].phase() < 0.5f;
     }

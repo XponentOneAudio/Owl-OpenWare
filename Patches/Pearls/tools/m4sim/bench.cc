@@ -157,6 +157,9 @@ int main() {
     { "hifi delay unison", QUALITY_DIGITAL, false, true, false, 0.95f, 0.3f, 0.6f, false, 0.0f },
     { "hifi delay sparse", QUALITY_DIGITAL, false, true, false, 0.3f, 0.3f, 0.6f, false, 7.0f },
     { "synth", QUALITY_DIGITAL, false, false, true, 0.95f, 0.3f, 0.6f, false, 7.0f },
+    // Knobs at noon, no randomness: as first measured on a Lich.
+    { "hifi delay at noon", QUALITY_DIGITAL, false, true, false, 0.5f, 0.0f, 0.5f, false, 0.0f },
+    { "hifi granular at noon", QUALITY_DIGITAL, false, false, false, 0.5f, 0.0f, 0.5f, false, 0.0f },
   };
   const char* only = NULL;
   (void)only;

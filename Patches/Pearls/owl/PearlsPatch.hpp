@@ -21,6 +21,14 @@
 #include "engine/pearls_profile.h"
 #include "lich/lich_pearls.h"
 
+#ifdef __arm__
+extern "C" {
+float pearls_fma_loop(float a, int n);
+float pearls_fma_independent_loop(float a, int n);
+uint32_t pearls_int_loop(uint32_t x, int n);
+}
+#endif
+
 class PearlsPatch : public Patch {
  public:
   PearlsPatch() {
@@ -144,6 +152,8 @@ class PearlsPatch : public Patch {
   struct Calibration {
     int random_x10, sequential_x10, copy_x10, fma_x10, fma_independent_x10,
         int_x10;
+    // The same loops through the SRAM1 alias (I-Code bus).
+    int fma_alias_x10, fma_independent_alias_x10, int_alias_x10;
   };
 
   // The buffers' contents are hidden from the compiler (the asm), so that
@@ -170,48 +180,11 @@ class PearlsPatch : public Patch {
     return sum;
   }
 
-  static __attribute__((noinline)) float Fma(float a, int n) {
-    volatile float vb = 0.9999f;
-    volatile float vc = 0.0001f;
-    const float b = vb;
-    const float c = vc;
-    for (int i = 0; i < n; ++i) {
-      a = a * b + c;
-      a = a * b + c;
-      a = a * b + c;
-      a = a * b + c;
-    }
-    return a;
-  }
-
-  // 4 independent multiply-adds per iteration (throughput, not latency).
-  static __attribute__((noinline)) float FmaIndependent(float a, int n) {
-    volatile float vb = 0.9999f;
-    volatile float vc = 0.0001f;
-    const float b = vb;
-    const float c = vc;
-    float a1 = a, a2 = a, a3 = a, a4 = a;
-    for (int i = 0; i < n; ++i) {
-      a1 = a1 * b + c;
-      a2 = a2 * b + c;
-      a3 = a3 * b + c;
-      a4 = a4 * b + c;
-    }
-    return a1 + a2 + a3 + a4;
-  }
-
-  // 4 dependent integer multiply-adds per iteration.
-  static __attribute__((noinline)) uint32_t IntChain(uint32_t x, int n) {
-    volatile uint32_t vb = 3;
-    const uint32_t b = vb;
-    for (int i = 0; i < n; ++i) {
-      x = x * b + 1;
-      x = x * b + 1;
-      x = x * b + 1;
-      x = x * b + 1;
-    }
-    return x;
-  }
+  // The loops are in assembly (owl/calibration.c), placed at the start of
+  // the patch (.text.fast), in SRAM1: n iterations of 4 dependent
+  // multiply-adds, 4 independent ones, 4 dependent integer ones.
+  typedef float (*FloatLoop)(float, int);
+  typedef uint32_t (*IntLoop)(uint32_t, int);
 
   // The fewest cycles of 3 runs, with the interrupts off (each run is
   // under a millisecond).
@@ -256,10 +229,48 @@ class PearlsPatch : public Patch {
         }
         sink = ccm[7]; });
       volatile float fsink = 0.0f;
-      const int fma = Cycles([&] { fsink = Fma(1.0f, kN); });
+#ifdef __arm__
+      FloatLoop fma_loop = pearls_fma_loop;
+      FloatLoop fma_independent_loop = pearls_fma_independent_loop;
+      IntLoop int_loop = pearls_int_loop;
+#else
+      FloatLoop fma_loop = [](float a, int) { return a; };
+      FloatLoop fma_independent_loop = fma_loop;
+      IntLoop int_loop = [](uint32_t x, int) { return x; };
+#endif
+      const int fma = Cycles([&] { fsink = fma_loop(1.0f, kN); });
       const int fma_independent = Cycles([&] {
-        fsink = FmaIndependent(1.0f, kN); });
-      const int int_chain = Cycles([&] { sink = IntChain(1, kN); });
+        fsink = fma_independent_loop(1.0f, kN); });
+      const int int_chain = Cycles([&] { sink = int_loop(1, kN); });
+#ifdef __arm__
+      // SYSCFG_MEMRMP: SRAM1 (0x20000000) at 0x00000000 too, where the
+      // instructions are fetched through the I-Code bus instead of the
+      // System bus. The firmware's vectors are at 0x08010000 (VTOR), and a
+      // reset restores the mapping; put back after the measurement.
+      volatile uint32_t* memrmp = reinterpret_cast<volatile uint32_t*>(
+          0x40013800);
+      const uint32_t mapping = *memrmp;
+      *memrmp = (mapping & ~7u) | 3u;
+      __asm__ volatile("dsb\n isb" : : : "memory");
+      FloatLoop fma_alias = reinterpret_cast<FloatLoop>(
+          reinterpret_cast<uintptr_t>(fma_loop) - 0x20000000u);
+      FloatLoop fma_independent_alias = reinterpret_cast<FloatLoop>(
+          reinterpret_cast<uintptr_t>(fma_independent_loop) - 0x20000000u);
+      IntLoop int_alias = reinterpret_cast<IntLoop>(
+          reinterpret_cast<uintptr_t>(int_loop) - 0x20000000u);
+      const bool aliased = reinterpret_cast<uintptr_t>(int_loop) <
+          0x2001c000u;
+      if (aliased) {
+        calibration_.fma_alias_x10 = Cycles([&] {
+          fsink = fma_alias(1.0f, kN); }) * 10 / kN;
+        calibration_.fma_independent_alias_x10 = Cycles([&] {
+          fsink = fma_independent_alias(1.0f, kN); }) * 10 / kN;
+        calibration_.int_alias_x10 = Cycles([&] {
+          sink = int_alias(1, kN); }) * 10 / kN;
+      }
+      *memrmp = mapping;
+      __asm__ volatile("dsb\n isb" : : : "memory");
+#endif
       (void)sink;
       (void)fsink;
       calibration_.random_x10 = (random_ext - random_ccm) * 10 / kN;
@@ -304,22 +315,24 @@ class PearlsPatch : public Patch {
     if (++report_blocks_ * size < int(getSampleRate()) / 2) {
       return;
     }
-    // Cycles per access (r, s), per loop of 4 multiply-adds (f dependent,
-    // fi independent, i integer); percent of the block
+    // Cycles per loop of 4 multiply-adds (f dependent, fi independent, i
+    // integer), normally / through the SRAM1 alias; percent of the block
     // budget, averaged: the delay controller or grain triggers (dc), the
     // grains or delay taps (gp), the reverb (rv), the whole processor (pr),
     // the whole engine (en); the load, average and peak; the grain limit.
     char* p = message_;
-    p = Append(p, "r");
-    p = AppendInt(p, calibration_.random_x10 / 10);
-    p = Append(p, " s");
-    p = AppendInt(p, calibration_.sequential_x10 / 10);
-    p = Append(p, " f");
+    p = Append(p, "f");
     p = AppendInt(p, calibration_.fma_x10 / 10);
+    p = Append(p, "/");
+    p = AppendInt(p, calibration_.fma_alias_x10 / 10);
     p = Append(p, " fi");
     p = AppendInt(p, calibration_.fma_independent_x10 / 10);
+    p = Append(p, "/");
+    p = AppendInt(p, calibration_.fma_independent_alias_x10 / 10);
     p = Append(p, " i");
     p = AppendInt(p, calibration_.int_x10 / 10);
+    p = Append(p, "/");
+    p = AppendInt(p, calibration_.int_alias_x10 / 10);
 #ifdef PEARLS_PROFILE
     static const char* const kSlotNames[PEARLS_PROFILE_NUM_SLOTS] = {
       " dc", " gp", " rv", " pr", " en"

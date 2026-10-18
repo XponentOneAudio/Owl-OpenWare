@@ -38,6 +38,11 @@
 #include "beads/dsp/trigger_generator.h"
 #include "beads/dsp/randomized_parameter.h"
 
+// Lich port: the delay taps' control rate (see DelayController::RenderInternal).
+#ifndef BEADS_DELAY_CONTROL_RATE
+#define BEADS_DELAY_CONTROL_RATE 1
+#endif
+
 namespace beads {
 
 struct DelayTap {
@@ -194,6 +199,19 @@ class TapEnvelope {
     }
   }
 
+  // Lich port: what Render() will return in `ahead` samples (without
+  // advancing).
+  inline float Value(const Shape& s, int ahead) const {
+    float phase = phase_ + phase_increment_ * float(ahead);
+    if (phase >= 1.0f) {
+      phase -= 1.0f;
+    }
+    const float triangle = phase < s.pw
+        ? phase * s.slope_up
+        : 1.0f - (phase - s.pw) * s.slope_down;
+    return s.shape < 0.2f ? 1.0f + (triangle - 1.0f) * s.shape * 5.0f : triangle;
+  }
+
   inline float Render(const Shape& s) {
     const float triangle = phase_ < s.pw
         ? phase_ * s.slope_up
@@ -297,6 +315,10 @@ class DelayController {
 
   // Lich port: values computed again only when their inputs change.
   float ratio_density_;
+  float interval_density_;
+  float interval_fm_;
+  float interval_;
+  float interval_lp_coefficient_;
   float ratio_fm_;
   float ratio_tap_ratio_[NUM_RATIOS];
   float ratio_tap_gain_[NUM_RATIOS];
@@ -313,6 +335,11 @@ class DelayController {
   int32_t taps_delay_[NUM_TAPS];
   float taps_base_gain_[NUM_TAPS];
   int taps_loudest_;
+#if BEADS_DELAY_CONTROL_RATE > 1
+  int control_countdown_;
+  float ramp_gain_[NUM_TAPS];
+  float ramp_step_[NUM_TAPS];
+#endif  // BEADS_DELAY_CONTROL_RATE
   
   RandomWalkModulation position_modulation_;
   RandomWalkModulation shape_modulation_;

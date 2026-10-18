@@ -32,6 +32,11 @@
 #include <cstring>
 #include <new>
 
+// Lich port: see owl/lich_config.h.
+#ifndef PEARLS_COLD
+#define PEARLS_COLD
+#endif
+
 namespace pearls {
 
 using namespace beads;
@@ -147,7 +152,7 @@ Engine::~Engine() {
   free(reverb_buffer_);
 }
 
-bool Engine::Init() {
+PEARLS_COLD bool Engine::Init() {
   // malloc and placement new, so that a failed allocation (possible on the
   // Lich) is reported instead of assumed away.
   // On the Lich the heap fills its 56 kB of internal CCM first, in this
@@ -269,7 +274,7 @@ void Engine::ReadLoadArrays(const void* context, size_t frame,
   *r = engine->load_r_[frame];
 }
 
-bool Engine::StartLoad(
+PEARLS_COLD bool Engine::StartLoad(
     const float* l,
     const float* r,
     size_t frames,
@@ -286,7 +291,7 @@ bool Engine::StartLoad(
   return true;
 }
 
-bool Engine::StartLoad(
+PEARLS_COLD bool Engine::StartLoad(
     FrameReader reader,
     const void* context,
     size_t frames,
@@ -306,7 +311,7 @@ bool Engine::StartLoad(
   return true;
 }
 
-bool Engine::StartSave(float* l, float* r, size_t capacity) {
+PEARLS_COLD bool Engine::StartSave(float* l, float* r, size_t capacity) {
   if (transfer_state_ != TRANSFER_IDLE || !l || !r) {
     return false;
   }

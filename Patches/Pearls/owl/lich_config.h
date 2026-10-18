@@ -22,6 +22,11 @@
 #define BEADS_REVERB_DIVIDER 2
 #define BEADS_NO_WASTE_CPU
 #define PEARLS_TRANSFER_CHUNK 256
+// Code run once or rarely (setup, configuration, sample loading), compiled
+// for size so that the patch fits in its 144 kB.
+#define PEARLS_COLD __attribute__((noinline, optimize("Os")))
+// Delay mode: the taps worked out every 4 samples (ramps in between).
+#define BEADS_DELAY_CONTROL_RATE 4
 // Cycle counts of parts of the engine (engine/pearls_profile.h).
 #if defined(__arm__) && !defined(PEARLS_NO_PROFILE)
 #define PEARLS_PROFILE

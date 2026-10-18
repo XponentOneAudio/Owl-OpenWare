@@ -1,11 +1,12 @@
 ENTRY(Reset_Handler)
 MEMORY {
-  CODE (rx)  : ORIGIN = 0x00000000, LENGTH = 1M
+  VECTORS (rx) : ORIGIN = 0x00000000, LENGTH = 1K
+  CODE (rx)  : ORIGIN = 0x00200000, LENGTH = 1M
   RAM (rwx)  : ORIGIN = 0x20300000, LENGTH = 1M - 4K
 }
 SECTIONS {
+  .vectors : { KEEP(*(.isr_vector)) } > VECTORS
   .text : {
-    KEEP(*(.isr_vector))
     *(.text*) *(.rodata*)
     KEEP(*(.init)) KEEP(*(.fini))
     . = ALIGN(4);

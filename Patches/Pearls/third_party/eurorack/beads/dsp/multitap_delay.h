@@ -73,19 +73,31 @@ class MultitapDelay {
 
     FloatFrame mix;
     mix.l = mix.r = 0.0f;
+    // Lich port: tap_[i].Render() and no_latency_tap_[i].Render() inline,
+    // so that a silent tap costs little: the pitch-shifted tap's phase
+    // advances (by the same increment for all), and nothing is read. Same
+    // output.
+    const int32_t increment = static_cast<int32_t>(int(1024.0f * (
+        speed - 1.0f)));
     for (int i = 0; i < DelayController::NUM_TAPS; ++i) {
-      tap_[i].Render(
-          delay_line,
-          taps.tap[i].delay,
-          taps.tap[i].gain * gain,
-          speed,
-          &mix);
-      no_latency_tap_[i].Render(
-          delay_line,
-          taps.tap[i].delay,
-          taps.tap[i].gain * (1.0f - gain),
-          speed,
-          &mix);
+      const int32_t delay = taps.tap[i].delay;
+      if (delay == 0) {
+        continue;
+      }
+      tap_[i].Advance(increment);
+      const float tap_gain = taps.tap[i].gain;
+      if (tap_gain == 0.0f) {
+        continue;
+      }
+      const float pitch_shifted_gain = tap_gain * gain;
+      if (pitch_shifted_gain != 0.0f) {
+        tap_[i].RenderAdvanced(delay_line, delay, pitch_shifted_gain, &mix);
+      }
+      const float no_latency_gain = tap_gain * (1.0f - gain);
+      if (no_latency_gain != 0.0f) {
+        no_latency_tap_[i].RenderAdvanced(
+            delay_line, delay, no_latency_gain, &mix);
+      }
     }
 
 #ifdef ENABLE_BANDWIDTH_CONTROL

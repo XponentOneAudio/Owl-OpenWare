@@ -5,6 +5,7 @@
 #   make load       load into RAM over USB MIDI (needs FirmwareSender)
 #   make store SLOT=n   store in slot n
 #   make size       sizes against the 144 kB patch limit
+#   LINEAR_TAPS=1   delay taps with linear interpolation (see tap.h)
 #   make size LDSCRIPT=<script with a larger PATCHRAM>   sizes of a patch
 #                   that doesn't fit yet
 #
@@ -34,6 +35,7 @@ stage:
 	cp -r $(ROOT)/lich $(STAGE)/lich
 	cp -r $(ROOT)/third_party/eurorack/beads $(STAGE)/beads
 	cp -r $(ROOT)/third_party/eurorack/stmlib $(STAGE)/stmlib
+	$(if $(LINEAR_TAPS),echo '#define BEADS_DELAY_TAPS_LINEAR' >> $(STAGE)/lich_config.h)
 
 patch sysex load store: stage
 	$(MAKE) $(OWL_ARGS) $(if $(SLOT),SLOT=$(SLOT)) $@

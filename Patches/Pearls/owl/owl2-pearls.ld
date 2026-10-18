@@ -34,6 +34,11 @@ SECTIONS
     *(.text.Reset_Handler)
     *(.text.startup)
     *(.main*)
+    /* Pearls: code that runs through the SRAM1 alias at 0x00000000
+       (SYSCFG remap, see owl/PearlsPatch.hpp): SRAM1 ends at 0x2001c000. */
+    _fast_text_start = .;
+    *(.text.fast*)
+    _fast_text_end = .;
     *(.text)           /* .text sections (code) */
     *(.text*)          /* .text* sections (code) */
     *(.rodata)         /* .rodata sections (constants, strings, etc.) */
@@ -108,6 +113,7 @@ SECTIONS
   } >PATCHRAM
 
   ASSERT(LOADADDR(.data) == ADDR(.data), "Pearls: .data load address differs from its address")
+  ASSERT(_fast_text_end <= 0x2001c000, "Pearls: .text.fast beyond SRAM1")
 
   /* Uninitialized data section */
   . = ALIGN(8);

@@ -33,6 +33,11 @@
 #include "engine/pearls_engine.h"
 #include "beads/resources.h"
 
+// Lich port: see owl/lich_config.h.
+#ifndef PEARLS_COLD
+#define PEARLS_COLD
+#endif
+
 namespace pearls {
 namespace lich {
 
@@ -103,7 +108,7 @@ LichPearls::~LichPearls() {
   free(controls_);
 }
 
-bool LichPearls::Init(float sample_rate) {
+PEARLS_COLD bool LichPearls::Init(float sample_rate) {
   sample_rate_ = sample_rate;
   // malloc and placement new: OWL patches have no nothrow operator new.
   void* engine_memory = malloc(sizeof(Engine));
@@ -236,7 +241,7 @@ void LichPearls::SampleReading() {
   sample_reading_ = true;
 }
 
-bool LichPearls::LoadSample(const void* wav, size_t bytes) {
+PEARLS_COLD bool LichPearls::LoadSample(const void* wav, size_t bytes) {
   sample_reading_ = false;
   if (!ParseWav(wav, bytes, &wav_info_) ||
       !engine_->StartLoad(&ReadWavFrame, &wav_info_, wav_info_.frames,

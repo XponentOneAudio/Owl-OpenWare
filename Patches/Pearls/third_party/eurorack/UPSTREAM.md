@@ -96,16 +96,28 @@ Different output, selected by the Lich build (`owl/lich_config.h`):
   same levels within 1 dB, the 8-12 kHz band 10 dB lower).
 - `BEADS_NO_WASTE_CPU` removes the dummy grain players that Beads uses to
   waste CPU cycles.
-- `multitap_delay.h`, `tap.h`, `delay_line.h`, `granular_processor.h`: the
+- (Reverted: `multitap_delay.h`, `tap.h`, `delay_line.h`, `granular_processor.h`: the
   delay mode's taps are rendered a block at a time before the block is
   written (as the grains), when no tap reads a frame the block writes;
   each tap's frames are copied from the buffer in one go (burst reads from
   the SDRAM instead of 4 scattered reads per sample and head). Otherwise
   (delays near the buffer's length), the same code renders one sample at
-  a time, after each write. Same output.
+  a time, after each write. Same output. Slower on the Lich: reverted.)
 - `delay_controller.{h,cc}`: a tap's phase increment (a division) is only
   computed again when its delay changes, and a silent tap's envelope only
   advances. Same output.
 - Some functions called once per grain or per block are kept out of line
   (`noinline`), and the block code is shared by the 8 delay line types,
   for the patch to fit in the Lich's 144 kB.
+- `delay_controller.{h,cc}`: with `BEADS_DELAY_CONTROL_RATE` (4 on the
+  Lich), the taps are worked out every 4 samples; in between each tap's
+  gain ramps to its value at the next update (the envelopes are straight
+  lines in their phase: the ramps follow them except across a corner).
+  The clock runs every sample; a retrig or a freeze change updates at
+  once. The difference is 62 to 75 dB below the signal over the delay
+  scenarios. The other caches (ratios, interval, shape, delays, gains)
+  are exact.
+- `multitap_delay.h`, `tap.h`: the taps are rendered inline, a silent tap
+  costing a phase update; the bandwidth filter's coefficients only when
+  the bandwidth changes (exact). `BEADS_DELAY_TAPS_LINEAR` reads the taps
+  with linear interpolation instead of Hermite.
