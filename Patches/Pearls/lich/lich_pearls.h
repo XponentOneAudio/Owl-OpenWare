@@ -45,9 +45,6 @@ namespace pearls {
 class Engine;
 struct Controls;
 
-// See pearls_engine.h.
-void SetFastCodeOffset(uintptr_t offset);
-
 namespace lich {
 
 enum Page {

@@ -426,6 +426,9 @@ void LichPearls::UpdateControls() {
     Blink(zone + 1, false);
   }
   c.quality = QUALITY_DIGITAL - zone;
+#ifdef PEARLS_TEST_QUALITY
+  c.quality = PEARLS_TEST_QUALITY;  // tools/owlhost tests
+#endif
   const float gain = s[KNOB_B].value;
   c.gain = gain < 0.05f
       ? 0

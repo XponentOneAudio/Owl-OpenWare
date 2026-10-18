@@ -2,23 +2,23 @@
 """fast_sections.py: the functions to place in the Lich's fast code region.
 
 The Lich runs the patch from SRAM, where the CPU fetches instructions over
-the System bus; through SRAM1's alias at 0x00000000 (SYSCFG remap) it
-fetches them over the I-Code bus instead, faster. Only the patch's first
-64 kB are in SRAM1 (0x2000c000 to 0x2001c000), so only the hot code goes
-there, and called through the alias, it must only call code there too: a
-relative branch from the alias lands at the alias of its target.
+the System bus, with the data; through SRAM1's alias at 0x00000000 (SYSCFG
+remap) it fetches them over the I-Code bus instead, much faster. Only the
+patch's first 64 kB are in SRAM1 (0x2000c000 to 0x2001c000), so only the hot
+code goes there: owl/owl2-pearls.ld links it at its alias (.fast), and the
+linker adds veneers for the calls between it and the rest.
 
   fast_sections.py ld PATCH.elf ENTRY... > fast.ld
       the linker script lines that place every function the entries reach
       (by direct calls and branches), except those matching --exclude, in
-      the fast region
+      .fast
   fast_sections.py check PATCH.elf ENTRY...
-      fails if a function the entries reach is outside the fast region
-      (excluded functions aside)
+      fails if one of these functions is not in .fast
 
---exclude NAME: a regular expression on the demangled names of functions
-that the entries reach but that never run through the alias (for instance
-the processors of the other qualities: see engine/pearls_engine.cc).
+--exclude NAME: a regular expression on the demangled names (without
+parameters) of functions that the entries reach but that are not hot (once
+per grain or less), to leave room, or that are not in a section of their own
+(link time optimised).
 """
 
 import argparse
@@ -26,8 +26,8 @@ import re
 import subprocess
 import sys
 
-FAST_BEGIN = 0x2000c000
-FAST_END = 0x2001c000
+FAST_BEGIN = 0x0000c000  # the alias of 0x2000c000
+FAST_END = 0x0001c000
 
 
 def tool(name):
@@ -75,57 +75,29 @@ def calls(elf, funcs):
     return graph
 
 
-def data_references(elf, funcs, seen):
-    """[(instruction address, target)] of the PC-relative address
-    computations (a literal loaded in a register, then add rN, pc: how -fpic
-    code reaches its data and GOT) in the functions seen, target None when
-    it cannot be followed. Through the alias, the target is aliased too."""
-    import tempfile
-    with tempfile.NamedTemporaryFile() as f:
-        subprocess.run([tool('objcopy'), '-O', 'binary', elf, f.name],
-                       check=True)
-        image = f.read()
-    # The binary starts at the lowest loaded section.
-    headers = subprocess.run([tool('objdump'), '-h', elf], capture_output=True,
-                             text=True, check=True).stdout.splitlines()
-    base = min(int(h.split()[3], 16) for h, flags in zip(headers, headers[1:])
-               if re.match(r'\s+\d+ ', h) and 'LOAD' in flags)
-
-    def word(a):
-        return int.from_bytes(image[a - base:a - base + 4], 'little')
-
-    literal = re.compile(r'\tldr(?:\.w)?\s+(r\d+|sb|sl|fp|ip|lr), '
-                         r'\[pc, #-?\d+\]\s*; \(?([0-9a-f]+)')
-    add_pc = re.compile(r'\tadd\s+(r\d+|sb|sl|fp|ip|lr), pc$')
-    insn = re.compile(r'^\s*([0-9a-f]+):')
-    result = []
-    for a in sorted(seen):
-        size = funcs[a][2]
-        out = subprocess.run(
-            [tool('objdump'), '-d', '--start-address=0x%x' % a,
-             '--stop-address=0x%x' % (a + size), elf],
-            capture_output=True, text=True, check=True).stdout
-        loaded = {}
-        for line in out.splitlines():
-            m = insn.match(line)
-            if not m:
-                continue
-            here = int(m.group(1), 16)
-            m2 = literal.search(line)
-            if m2:
-                loaded[m2.group(1)] = word(int(m2.group(2), 16))
-                continue
-            m3 = add_pc.search(line)
-            if m3:
-                value = loaded.get(m3.group(1))
-                result.append((here, None if value is None else
-                               (value + here + 4) & 0xffffffff))
-    return result
+def name_only(pretty):
+    """A demangled name without its parameters."""
+    depth = 0
+    for i, c in enumerate(pretty):
+        if c in '<':
+            depth += 1
+        elif c in '>':
+            depth -= 1
+        elif c == '(' and depth == 0 and i > 0:
+            return pretty[:i]
+    return pretty
 
 
 def reach(elf, entries, exclude):
     funcs = functions(elf)
     graph = calls(elf, funcs)
+    # A veneer (the linker's, for a call between .fast and the rest)
+    # leads to its function.
+    by_mangled = {f[0]: a for a, f in funcs.items()}
+    for addr, (mangled, pretty, size) in funcs.items():
+        m = re.match(r'__(.*)_veneer$', mangled)
+        if m and m.group(1) in by_mangled:
+            graph.setdefault(addr, set()).add(by_mangled[m.group(1)])
     by_name = {}
     for addr, (mangled, pretty, size) in funcs.items():
         by_name.setdefault(mangled, addr)
@@ -144,8 +116,8 @@ def reach(elf, entries, exclude):
         a = todo.pop()
         if a in seen:
             continue
-        name = funcs[a][1]
-        if excluded and excluded.search(name):
+        name = name_only(funcs[a][1])
+        if excluded and excluded.search(name) or name.endswith('_veneer'):
             skipped.add(a)
             continue
         seen.add(a)
@@ -173,18 +145,12 @@ def main():
         return
     bad = [a for a in seen if not FAST_BEGIN <= a < FAST_END]
     for a in sorted(bad):
-        print('outside the fast region: %08x %s' % (a, funcs[a][1][:100]))
-    refs = data_references(args.elf, funcs, seen)
-    bad_refs = [(a, t) for a, t in refs
-                if t is None or not FAST_BEGIN <= t < FAST_END]
-    for a, t in bad_refs:
-        print('data reference at %08x %s' % (a, 'not followed' if t is None
-                                            else 'to %08x, outside' % t))
-    if bad or bad_refs:
+        print('not in .fast: %08x %s' % (a, funcs[a][1][:100]))
+    if bad:
         sys.exit(1)
-    print('fast region: %d functions and their %d data references, all in '
-          '%08x-%08x (%d excluded callees)'
-          % (len(seen), len(refs), FAST_BEGIN, FAST_END, len(skipped)))
+    print('.fast: %d functions, %d bytes, all at %08x-%08x (%d excluded '
+          'callees)' % (len(seen), sum(funcs[a][2] for a in seen),
+                        FAST_BEGIN, FAST_END, len(skipped)))
 
 
 if __name__ == '__main__':

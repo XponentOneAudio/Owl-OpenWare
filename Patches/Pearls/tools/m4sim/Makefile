@@ -6,6 +6,7 @@
 #   make run ONLY=11 PROFILE=1   one configuration, with a function profile
 #   make run MAX_GRAINS=8        with a grain voice limit
 #   make run BLOCK=12            with the engine's 12-frame blocks (Beads')
+#   make run OPT=-O2             the DSP's optimisation (the Lich's: -O2)
 #   TOOLROOT=<dir>/              the toolchain the patch is built with (gcc
 #                                10; gcc 13 refuses -ffreestanding C++)
 #
@@ -20,8 +21,9 @@ CXX = $(TOOLROOT)arm-none-eabi-g++
 CC = $(TOOLROOT)arm-none-eabi-gcc
 ARCH = -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16 -fsingle-precision-constant
 DEFS = $(if $(ONLY),-DONLY=$(ONLY)) $(if $(MAX_GRAINS),-DMAX_GRAINS=$(MAX_GRAINS)) $(if $(REVERB),-DREVERB=$(REVERB)) $(if $(BLOCK),-DPEARLS_BLOCK_SIZE=$(BLOCK)) $(if $(LINEAR_TAPS),-DBEADS_DELAY_TAPS_LINEAR)
+OPT ?= -O3
 # The flags OwlProgram compiles patches with (compile.mk), minus -fpic/-fpie.
-FLAGS = $(ARCH) -O3 -ffast-math -DNDEBUG -mtune=cortex-m4 -nostdlib -fno-builtin \
+FLAGS = $(ARCH) $(OPT) -ffast-math -DNDEBUG -mtune=cortex-m4 -nostdlib -fno-builtin \
 	-ffreestanding -mno-unaligned-access -fno-omit-frame-pointer -flto \
 	-fdata-sections -ffunction-sections \
 	-include lich_config.h -I$(ROOT)/owl -I$(ROOT) -I$(ROOT)/third_party/eurorack $(DEFS)

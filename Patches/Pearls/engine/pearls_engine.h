@@ -41,10 +41,6 @@
 
 namespace pearls {
 
-// Lich port: when offset is not 0, the hi-fi processor runs through the
-// alias of its code at its address minus offset (see pearls_engine.cc).
-void SetFastCodeOffset(uintptr_t offset);
-
 // Beads "media" settings. The Beads manual's names are in quotes; its
 // quality button steps downwards (3, 2, 1, 0, 3...).
 enum Quality {

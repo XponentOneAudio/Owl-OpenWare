@@ -192,11 +192,9 @@ int main(void) {
   /* As DynamicPatchDefinition: copy, blank the rest of the program. */
   memcpy(PATCHRAM, patch_bin, size);
   /* The STM32F427's SRAM1 alias at 0x00000000 (SYSCFG remap), which the
-     patch can run code through: here a copy of the patch's first 64 kB.
-     Its code is not written to, but its data is: the data written through
-     the alias here is not the patch's (on the STM32, the same memory).
-     -DALIAS_BYTES=N: only the first N bytes (to check what runs through
-     it). */
+     patch links its hot code at: here a copy of the patch's first 64 kB
+     (only code, which is not written to). -DALIAS_BYTES=N: only the first
+     N bytes (to check what runs through it). */
 #ifndef ALIAS_BYTES
 #define ALIAS_BYTES 0x10000
 #endif

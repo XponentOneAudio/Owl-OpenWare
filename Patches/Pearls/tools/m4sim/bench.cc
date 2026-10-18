@@ -160,6 +160,9 @@ int main() {
     // Knobs at noon, no randomness: as first measured on a Lich.
     { "hifi delay at noon", QUALITY_DIGITAL, false, true, false, 0.5f, 0.0f, 0.5f, false, 0.0f },
     { "hifi granular at noon", QUALITY_DIGITAL, false, false, false, 0.5f, 0.0f, 0.5f, false, 0.0f },
+    { "cold delay at noon", QUALITY_VINTAGE_DIGITAL, false, true, false, 0.5f, 0.0f, 0.5f, false, 0.0f },
+    { "sunny delay at noon", QUALITY_CLEAN_TAPE, false, true, false, 0.5f, 0.0f, 0.5f, false, 0.0f },
+    { "scorched delay at noon", QUALITY_DIRTY_TAPE, false, true, false, 0.5f, 0.0f, 0.5f, false, 0.0f },
   };
   const char* only = NULL;
   (void)only;

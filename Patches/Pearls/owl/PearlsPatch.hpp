@@ -58,7 +58,6 @@ class PearlsPatch : public Patch {
       pearls_.set_wavetables(waves_->getData(), waves_->getSize());
     }
     ok_ = pearls_.Init(getSampleRate());
-    EnableFastCode();
     cycles_per_block_ = 0.0f;
     overloaded_blocks_ = 0;
     skip_block_ = false;
@@ -68,7 +67,6 @@ class PearlsPatch : public Patch {
   }
 
   ~PearlsPatch() {
-    DisableFastCode();
     FinishSampleRead();
     FreeSample();
     pearls_.set_wavetables(NULL, 0);
@@ -185,8 +183,8 @@ class PearlsPatch : public Patch {
     return sum;
   }
 
-  // The loops are in assembly (owl/calibration.c), placed at the start of
-  // the patch (.text.fast), in SRAM1: n iterations of 4 dependent
+  // The loops are in assembly (owl/calibration.c), with the code that runs
+  // through the SRAM1 alias (.text.fast): n iterations of 4 dependent
   // multiply-adds, 4 independent ones, 4 dependent integer ones.
   typedef float (*FloatLoop)(float, int);
   // A table in SRAM (with the code: the patch object is in the heap).
@@ -197,6 +195,12 @@ class PearlsPatch : public Patch {
     49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64,
   };
   typedef uint32_t (*IntLoop)(uint32_t, int);
+  typedef uint32_t (*MixLoop)(uint32_t, int, const uint32_t*);
+
+  template<typename F>
+  static F Unaliased(F f) {
+    return reinterpret_cast<F>(reinterpret_cast<uintptr_t>(f) + 0x20000000u);
+  }
 
   // The fewest cycles of 3 runs, with the interrupts off (each run is
   // under a millisecond).
@@ -242,54 +246,40 @@ class PearlsPatch : public Patch {
         sink = ccm[7]; });
       volatile float fsink = 0.0f;
 #ifdef __arm__
-      FloatLoop fma_loop = pearls_fma_loop;
-      FloatLoop fma_independent_loop = pearls_fma_independent_loop;
-      IntLoop int_loop = pearls_int_loop;
+      // The loops are linked at their SRAM1 alias (owl/owl2-pearls.ld),
+      // 0x20000000 below their own address.
+      FloatLoop fma_alias = pearls_fma_loop;
+      FloatLoop fma_independent_alias = pearls_fma_independent_loop;
+      IntLoop int_alias = pearls_int_loop;
+      MixLoop mix_alias = pearls_mix_loop;
+      FloatLoop fma_loop = Unaliased(fma_alias);
+      FloatLoop fma_independent_loop = Unaliased(fma_independent_alias);
+      IntLoop int_loop = Unaliased(int_alias);
+      MixLoop mix_loop = Unaliased(mix_alias);
 #else
       FloatLoop fma_loop = [](float a, int) { return a; };
       FloatLoop fma_independent_loop = fma_loop;
       IntLoop int_loop = [](uint32_t x, int) { return x; };
+      MixLoop mix_loop = [](uint32_t x, int, const uint32_t*) { return x; };
+      FloatLoop fma_alias = fma_loop;
+      FloatLoop fma_independent_alias = fma_loop;
+      IntLoop int_alias = int_loop;
+      MixLoop mix_alias = mix_loop;
 #endif
       const int fma = Cycles([&] { fsink = fma_loop(1.0f, kN); });
       const int fma_independent = Cycles([&] {
         fsink = fma_independent_loop(1.0f, kN); });
       const int int_chain = Cycles([&] { sink = int_loop(1, kN); });
-#ifdef __arm__
       calibration_.mix_x10 = Cycles([&] {
-        sink = pearls_mix_loop(1, kN, kMixTable); }) * 10 / kN;
-      // SYSCFG_MEMRMP: SRAM1 (0x20000000) at 0x00000000 too, where the
-      // instructions are fetched through the I-Code bus instead of the
-      // System bus. The firmware's vectors are at 0x08010000 (VTOR), and a
-      // reset restores the mapping; put back after the measurement.
-      volatile uint32_t* memrmp = reinterpret_cast<volatile uint32_t*>(
-          0x40013800);
-      const uint32_t mapping = *memrmp;
-      *memrmp = (mapping & ~7u) | 3u;
-      __asm__ volatile("dsb\n isb" : : : "memory");
-      FloatLoop fma_alias = reinterpret_cast<FloatLoop>(
-          reinterpret_cast<uintptr_t>(fma_loop) - 0x20000000u);
-      FloatLoop fma_independent_alias = reinterpret_cast<FloatLoop>(
-          reinterpret_cast<uintptr_t>(fma_independent_loop) - 0x20000000u);
-      IntLoop int_alias = reinterpret_cast<IntLoop>(
-          reinterpret_cast<uintptr_t>(int_loop) - 0x20000000u);
-      const bool aliased = reinterpret_cast<uintptr_t>(int_loop) <
-          0x2001c000u;
-      if (aliased) {
-        calibration_.fma_alias_x10 = Cycles([&] {
-          fsink = fma_alias(1.0f, kN); }) * 10 / kN;
-        calibration_.fma_independent_alias_x10 = Cycles([&] {
-          fsink = fma_independent_alias(1.0f, kN); }) * 10 / kN;
-        calibration_.int_alias_x10 = Cycles([&] {
-          sink = int_alias(1, kN); }) * 10 / kN;
-        typedef uint32_t (*MixLoop)(uint32_t, int, const uint32_t*);
-        MixLoop mix_alias = reinterpret_cast<MixLoop>(
-            reinterpret_cast<uintptr_t>(&pearls_mix_loop) - 0x20000000u);
-        calibration_.mix_alias_x10 = Cycles([&] {
-          sink = mix_alias(1, kN, kMixTable); }) * 10 / kN;
-      }
-      *memrmp = mapping;
-      __asm__ volatile("dsb\n isb" : : : "memory");
-#endif
+        sink = mix_loop(1, kN, kMixTable); }) * 10 / kN;
+      calibration_.fma_alias_x10 = Cycles([&] {
+        fsink = fma_alias(1.0f, kN); }) * 10 / kN;
+      calibration_.fma_independent_alias_x10 = Cycles([&] {
+        fsink = fma_independent_alias(1.0f, kN); }) * 10 / kN;
+      calibration_.int_alias_x10 = Cycles([&] {
+        sink = int_alias(1, kN); }) * 10 / kN;
+      calibration_.mix_alias_x10 = Cycles([&] {
+        sink = mix_alias(1, kN, kMixTable); }) * 10 / kN;
       (void)sink;
       (void)fsink;
       calibration_.random_x10 = (random_ext - random_ccm) * 10 / kN;
@@ -301,29 +291,6 @@ class PearlsPatch : public Patch {
     }
     free(ext);
     free(ccm);
-  }
-
-  // The SRAM1 alias at 0x00000000 (SYSCFG_MEMRMP), through which the hi-fi
-  // processor runs (fetched over the I-Code bus: about 15% faster than over
-  // the System bus). The firmware's vectors are at 0x08010000 (VTOR), and a
-  // reset restores the mapping. (PEARLS_NO_FAST_CODE: not used.)
-  void EnableFastCode() {
-#if defined(__arm__) && !defined(PEARLS_NO_FAST_CODE)
-    volatile uint32_t* memrmp = reinterpret_cast<volatile uint32_t*>(0x40013800);
-    memory_mapping_ = *memrmp;
-    *memrmp = (memory_mapping_ & ~7u) | 3u;
-    __asm__ volatile("dsb\n isb" : : : "memory");
-    pearls::SetFastCodeOffset(0x20000000u);
-#endif
-  }
-
-  void DisableFastCode() {
-#if defined(__arm__) && !defined(PEARLS_NO_FAST_CODE)
-    pearls::SetFastCodeOffset(0);
-    volatile uint32_t* memrmp = reinterpret_cast<volatile uint32_t*>(0x40013800);
-    *memrmp = memory_mapping_;
-    __asm__ volatile("dsb\n isb" : : : "memory");
-#endif
   }
 
   static __attribute__((noinline, optimize("Os"))) char* Append(
@@ -468,7 +435,6 @@ class PearlsPatch : public Patch {
   bool ok_;
   float cycles_per_block_;
   Calibration calibration_;
-  uint32_t memory_mapping_;
   int report_blocks_;
   float load_sum_;
   float load_peak_;

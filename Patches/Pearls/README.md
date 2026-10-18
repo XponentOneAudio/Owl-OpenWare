@@ -37,11 +37,13 @@ to twice the Lich's CPU. So on the Lich:
   alternated between three and two engine blocks. The patch works with any
   OpenWare block size and doesn't change it. A multiple of 32 keeps the
   load even.
-- **The hi-fi processor runs from the fast instruction bus.** The patch
-  maps SRAM1 at address 0 (the chip's remap), where the CPU fetches code
-  over the I-Code bus, and runs the hi-fi quality's code through it (about
-  15% faster than at its own address, measured on a Lich). The firmware
-  doesn't use address 0, and a reset restores the mapping.
+- **The audio code runs from the fast instruction bus.** The patch maps
+  SRAM1 at address 0 (the chip's remap) as it starts, and its hot code (the
+  processors of all four qualities, the reverb, the synth: 62 kB) is linked
+  there, where the CPU fetches it over the I-Code bus, while the data goes
+  over the System bus. On a Lich that took hi-fi delay mode from 105% to
+  73%. The firmware doesn't use address 0, and a reset restores the
+  mapping.
 - **Everything else is Beads' DSP, with the same output.** The grains are
   rendered block by block, and silent taps, a silent reverb and repeated
   divisions are skipped. The tests check the output against unmodified
@@ -290,7 +292,9 @@ report):
 | Delay mode (SIZE fully clockwise) | 73% | 73% |
 
 Before the hi-fi processor ran through the SRAM1 alias, the same settings
-measured 47% and 105% (and delay mode overloaded, with harsh noise).
+measured 47% and 105% (and delay mode overloaded, with harsh noise). The
+other qualities, which then didn't, measured 115% to 146% in delay mode;
+they now run through it too.
 
 The estimates below were made with `tools/m4sim`, a QEMU Cortex-M4 with the Lich's memory
 timings, as a share of a 180 MHz CPU. These are estimates, not
@@ -312,10 +316,9 @@ peak) matters more than the average.
 The governor watches the busiest recent blocks, not the average.
 
 - **Delay mode is the tight spot.** Its taps can't be reduced the way
-  grains can. In hi-fi it now measures 73%; the other qualities don't run
-  through the alias. If the Lich glitches in delay mode, turn the reverb
-  down (with nothing sent to it, the reverb stops using CPU once its tail
-  has died away), or prefer the hi-fi quality.
+  grains can. In hi-fi it measures 73%. If the Lich glitches in delay
+  mode, turn the reverb down (with nothing sent to it, the reverb stops
+  using CPU once its tail has died away), or prefer the hi-fi quality.
 - **The OWL web interface shows the patch's CPU load.** Please report it,
   with the settings.
 
@@ -357,12 +360,13 @@ The governor watches the busiest recent blocks, not the average.
   `owl/Makefile` copies the sources into `build/owl-src` first.
 - `make syx` checks each SysEx file by decoding it with OpenWare's own
   `sysex.c` and `crc32.c`.
-- The patch is linked twice: `tools/fast_sections.py` lists the functions
-  the hi-fi processor reaches, which the second link places in SRAM1 with
-  the data they address (`owl/owl2-pearls.ld`), and then checks that
-  nothing they reach or address is outside it.
-  `PEARLS_CPPFLAGS=-DPEARLS_NO_FAST_CODE` builds a patch that runs it from
-  its own address.
+- The DSP is compiled outside link time optimisation, at `-O2`, with a
+  section per function, and the patch is linked twice:
+  `tools/fast_sections.py` lists the functions that `Engine::Process`
+  reaches (cold ones aside), which the second link places in `.fast`, at
+  SRAM1's alias (`owl/owl2-pearls.ld`); the linker adds veneers for the
+  calls in and out. The patch's entry point turns the alias on before
+  anything else runs (`owl/calibration.c`).
 
 | Path | |
 |---|---|
