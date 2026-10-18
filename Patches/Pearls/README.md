@@ -53,7 +53,8 @@ messages, which must not be sent too fast:
   it needs `pip install mido python-rtmidi`. Run
   `python tools/send_sysex.py prebuilt/pearls-lich.syx`. `--list` shows
   the MIDI ports, `--port` picks one (default: the first with "OWL" in its
-  name), and `--delay 20` slows down further.
+  name), `--delay 20` slows down further, and `--info` shows what the
+  Lich reports (see below).
 - **MIDI-OX** (Windows): "SysEx: no buffers available" means its output
   buffers are too few or too small. In View > SysEx, open Sysex >
   Configure: set the low level output buffers to 64 buffers of 512 bytes,
@@ -72,6 +73,29 @@ messages, which must not be sent too fast:
    `python3 tools/make_sysex.py prebuilt/pearls-lich.bin out.syx --store N`.
    Then choose the slot with the Lich's encoder and press it to load.
 3. **Samples** (optional, see [Samples](#samples)).
+
+### If the display shows E or L
+
+The Lich's display shows **L** while it receives a file and while it
+writes its flash. It also stays on L if a transfer fails: an upload
+error doesn't show as E, so L that lasts more than a few seconds after
+a transfer means a failed transfer (send the file again, or switch the
+Lich off and on). **E** (blinking) is an error after
+a transfer; press the encoder to clear it.
+
+`send_sysex.py` reads the Lich's own error text: it checks the Lich's
+status while sending, stops at the first error, and prints it.
+`python tools/send_sysex.py --info` prints what the Lich reports: the
+firmware version, the current error, the CPU and memory use of the
+running patch, the stored patches and the stored resources. Close
+MIDI-OX and the OWL web page first: on Windows they can hold the ports.
+
+| Error text | Meaning |
+|---|---|
+| SysEx package out of sequence, Invalid SysEx checksum | A message was lost or damaged: send the file again with `--delay 30` |
+| Memory overflow, malloc failed | The patch ran out of memory: send `--info` output |
+| No free resources, Write failed, Data mismatch | The flash is full or failing |
+| Invalid STORE/SAVE command | The transfer before it failed |
 
 ## Panel
 

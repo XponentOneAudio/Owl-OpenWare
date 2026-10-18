@@ -1,20 +1,43 @@
 #!/usr/bin/env python3
-"""Sends a .syx file to the Lich over USB MIDI, one message at a time with
-a pause between them (SysEx tools that send too fast can run out of
-buffers, or overrun the module).
+"""Sends a .syx file to the Lich over USB MIDI, and shows what the Lich says.
+
+It sends one message at a time with a pause between them (SysEx tools that
+send too fast can run out of buffers, or overrun the module), asks the Lich
+for its status every few hundred messages, and stops at the first error,
+printing the Lich's own error text. --info asks the Lich for its firmware
+version, error status, CPU and memory use, stored patches and resources.
 
 On Windows it needs nothing but Python: it uses the Windows MIDI API
 (winmm) directly. On macOS and Linux it uses mido:
-pip install mido python-rtmidi.
+pip install mido python-rtmidi. Close MIDI-OX and the OWL web page first:
+they can hold the ports.
 
-  python send_sysex.py --list                     the MIDI output ports
+  python send_sysex.py --list                     the MIDI ports
+  python send_sysex.py --info                     what the Lich reports
   python send_sysex.py pearls-lich.syx            to the first "OWL" port
   python send_sysex.py pearls-waves.syx --port OWL --delay 20
 """
 
 import argparse
+import collections
+import struct
 import sys
 import time
+
+MANUFACTURER = 0x7d
+REQUEST_SETTINGS = 67  # CC: the Lich answers with SysEx
+FIRMWARE_UPLOAD = 0x10
+FIRMWARE_STORE = 0x11
+FIRMWARE_RUN = 0x12
+FIRMWARE_SAVE = 0x17
+PRESET_NAME = 0x01
+RESOURCE_NAME = 0x04
+FIRMWARE_VERSION = 0x20
+PROGRAM_MESSAGE = 0x22
+DEVICE_STATS = 0x23
+PROGRAM_STATS = 0x24
+BOOTLOADER_VERSION = 0x25
+PROGRAM_ERROR = 0x30
 
 
 def split_messages(data):
@@ -25,20 +48,59 @@ def split_messages(data):
         if b == 0xf0:
             start = i
         elif b == 0xf7 and start is not None:
-            messages.append(data[start:i + 1])
+            messages.append(bytes(data[start:i + 1]))
             start = None
     return messages
 
 
-class WinMidiOut(object):
-    """MIDI output through winmm (Windows), without any package."""
+def decode7(data):
+    """OpenWare's sysex_to_data."""
+    out = bytearray()
+    for i in range(0, len(data), 8):
+        msbs = data[i]
+        for j, b in enumerate(data[i + 1:i + 8]):
+            out.append(b | (((msbs >> j) & 1) << 7))
+    return bytes(out)
+
+
+def describe(message):
+    """A Lich reply as (kind, text), or None for anything else."""
+    if len(message) < 5 or message[1] != MANUFACTURER:
+        return None
+    cmd = message[3]
+    body = bytes(message[4:-1])
+    if cmd in (PRESET_NAME, RESOURCE_NAME) and len(body) > 1:
+        index = body[0]
+        name, _, rest = body[1:].partition(b'\0')
+        size = struct.unpack('>I', decode7(rest[:5]))[0] if len(rest) >= 5 else 0
+        kind = 'patch' if cmd == PRESET_NAME else 'resource'
+        return kind, '%2d  %-24s %8d bytes' % (index, name.decode('ascii', 'replace'), size)
+    text = body.decode('ascii', 'replace')
+    kinds = {FIRMWARE_VERSION: 'firmware', BOOTLOADER_VERSION: 'bootloader',
+             PROGRAM_MESSAGE: 'message', DEVICE_STATS: 'device',
+             PROGRAM_STATS: 'program', PROGRAM_ERROR: 'ERROR'}
+    if cmd in kinds:
+        return kinds[cmd], text
+    return None
+
+
+class WinMidi(object):
+    """MIDI in and out through winmm (Windows), without any package."""
+
+    MHDR_DONE = 1
+    BUFFERS = 32
+    BUFFER_SIZE = 512
 
     def __init__(self):
         import ctypes
         from ctypes import wintypes
         self.ctypes = ctypes
         self.winmm = ctypes.WinDLL('winmm')
-        self.handle = None
+        self.out_handle = None
+        self.in_handle = None
+        self.in_headers = collections.deque()
+        self.in_buffers = []
+        self.pending = bytearray()
 
         class MIDIOUTCAPSW(ctypes.Structure):
             _fields_ = [('wMid', wintypes.WORD), ('wPid', wintypes.WORD),
@@ -47,6 +109,12 @@ class WinMidiOut(object):
                         ('wTechnology', wintypes.WORD),
                         ('wVoices', wintypes.WORD), ('wNotes', wintypes.WORD),
                         ('wChannelMask', wintypes.WORD),
+                        ('dwSupport', wintypes.DWORD)]
+
+        class MIDIINCAPSW(ctypes.Structure):
+            _fields_ = [('wMid', wintypes.WORD), ('wPid', wintypes.WORD),
+                        ('vDriverVersion', wintypes.UINT),
+                        ('szPname', wintypes.WCHAR * 32),
                         ('dwSupport', wintypes.DWORD)]
 
         class MIDIHDR(ctypes.Structure):
@@ -61,28 +129,98 @@ class WinMidiOut(object):
                             ('dwOffset', wintypes.DWORD),
                             ('dwReserved', ctypes.c_size_t * 8)]
         self.MIDIOUTCAPSW = MIDIOUTCAPSW
+        self.MIDIINCAPSW = MIDIINCAPSW
         self.MIDIHDR = MIDIHDR
+        w = self.winmm
+        for f in (w.midiOutOpen, w.midiOutClose, w.midiOutShortMsg,
+                  w.midiOutLongMsg, w.midiOutPrepareHeader,
+                  w.midiOutUnprepareHeader, w.midiOutGetDevCapsW,
+                  w.midiInOpen, w.midiInClose, w.midiInStart, w.midiInStop,
+                  w.midiInReset, w.midiInAddBuffer, w.midiInPrepareHeader,
+                  w.midiInUnprepareHeader, w.midiInGetDevCapsW):
+            f.restype = wintypes.UINT
+        w.midiOutShortMsg.argtypes = [ctypes.c_void_p, wintypes.DWORD]
 
-    def check(self, result, what):
+    def check(self, result, what, error_text=None):
         if result != 0:
             text = self.ctypes.create_unicode_buffer(256)
-            self.winmm.midiOutGetErrorTextW(result, text, 256)
+            (error_text or self.winmm.midiOutGetErrorTextW)(result, text, 256)
             raise RuntimeError('%s: %s (error %d)' % (what, text.value, result))
 
-    def names(self):
+    def _names(self, count, caps_type, get_caps):
         out = []
-        for i in range(self.winmm.midiOutGetNumDevs()):
-            caps = self.MIDIOUTCAPSW()
-            self.winmm.midiOutGetDevCapsW(i, self.ctypes.byref(caps),
-                                          self.ctypes.sizeof(caps))
+        for i in range(count):
+            caps = caps_type()
+            get_caps(i, self.ctypes.byref(caps), self.ctypes.sizeof(caps))
             out.append(caps.szPname)
         return out
 
-    def open(self, index):
-        self.handle = self.ctypes.c_void_p()
-        self.check(self.winmm.midiOutOpen(self.ctypes.byref(self.handle),
+    def output_names(self):
+        return self._names(self.winmm.midiOutGetNumDevs(), self.MIDIOUTCAPSW,
+                           self.winmm.midiOutGetDevCapsW)
+
+    def input_names(self):
+        return self._names(self.winmm.midiInGetNumDevs(), self.MIDIINCAPSW,
+                           self.winmm.midiInGetDevCapsW)
+
+    def open_output(self, index):
+        self.out_handle = self.ctypes.c_void_p()
+        self.check(self.winmm.midiOutOpen(self.ctypes.byref(self.out_handle),
                                           index, None, None, 0),
-                   'opening the port')
+                   'opening the output port')
+
+    def open_input(self, index):
+        ctypes = self.ctypes
+        self.in_handle = ctypes.c_void_p()
+        # No callback: filled buffers are found by their MHDR_DONE flag.
+        self.check(self.winmm.midiInOpen(ctypes.byref(self.in_handle),
+                                         index, None, None, 0),
+                   'opening the input port', self.winmm.midiInGetErrorTextW)
+        for _ in range(self.BUFFERS):
+            buf = ctypes.create_string_buffer(self.BUFFER_SIZE)
+            hdr = self.MIDIHDR()
+            hdr.lpData = ctypes.cast(buf, ctypes.c_void_p)
+            hdr.dwBufferLength = self.BUFFER_SIZE
+            self.in_buffers.append((buf, hdr))
+            self._add_buffer(buf, hdr)
+        self.check(self.winmm.midiInStart(self.in_handle), 'starting input',
+                   self.winmm.midiInGetErrorTextW)
+
+    def _add_buffer(self, buf, hdr):
+        size = self.ctypes.sizeof(hdr)
+        hdr.dwFlags = 0
+        hdr.dwBytesRecorded = 0
+        self.winmm.midiInPrepareHeader(self.in_handle, self.ctypes.byref(hdr),
+                                       size)
+        self.winmm.midiInAddBuffer(self.in_handle, self.ctypes.byref(hdr), size)
+        self.in_headers.append((buf, hdr))
+
+    def receive(self):
+        """The complete SysEx messages received since the last call."""
+        messages = []
+        if not self.in_handle:
+            return messages
+        while self.in_headers and self.in_headers[0][1].dwFlags & self.MHDR_DONE:
+            buf, hdr = self.in_headers.popleft()
+            self.pending += buf.raw[:hdr.dwBytesRecorded]
+            self.winmm.midiInUnprepareHeader(self.in_handle,
+                                             self.ctypes.byref(hdr),
+                                             self.ctypes.sizeof(hdr))
+            self._add_buffer(buf, hdr)
+        while True:
+            end = self.pending.find(b'\xf7')
+            if end < 0:
+                break
+            start = self.pending.rfind(b'\xf0', 0, end)
+            if start >= 0:
+                messages.append(bytes(self.pending[start:end + 1]))
+            del self.pending[:end + 1]
+        return messages
+
+    def send_cc(self, cc, value):
+        self.check(self.winmm.midiOutShortMsg(self.out_handle,
+                                              0xb0 | (cc << 8) | (value << 16)),
+                   'sending a control change')
 
     def send(self, message):
         ctypes = self.ctypes
@@ -92,31 +230,40 @@ class WinMidiOut(object):
         hdr.dwBufferLength = len(message)
         hdr.dwBytesRecorded = len(message)
         size = ctypes.sizeof(hdr)
-        self.check(self.winmm.midiOutPrepareHeader(self.handle,
+        self.check(self.winmm.midiOutPrepareHeader(self.out_handle,
                                                    ctypes.byref(hdr), size),
                    'preparing a message')
         try:
-            self.check(self.winmm.midiOutLongMsg(self.handle,
+            self.check(self.winmm.midiOutLongMsg(self.out_handle,
                                                  ctypes.byref(hdr), size),
                        'sending a message')
             # Wait until the driver has sent it (MHDR_DONE).
             deadline = time.time() + 5.0
-            while not hdr.dwFlags & 1:
+            while not hdr.dwFlags & self.MHDR_DONE:
                 if time.time() > deadline:
                     raise RuntimeError('the driver did not send a message')
                 time.sleep(0.001)
         finally:
-            self.winmm.midiOutUnprepareHeader(self.handle, ctypes.byref(hdr),
-                                              size)
+            self.winmm.midiOutUnprepareHeader(self.out_handle,
+                                              ctypes.byref(hdr), size)
 
     def close(self):
-        if self.handle:
-            self.winmm.midiOutClose(self.handle)
-            self.handle = None
+        if self.in_handle:
+            self.winmm.midiInStop(self.in_handle)
+            self.winmm.midiInReset(self.in_handle)  # returns the buffers
+            for buf, hdr in self.in_buffers:
+                self.winmm.midiInUnprepareHeader(self.in_handle,
+                                                 self.ctypes.byref(hdr),
+                                                 self.ctypes.sizeof(hdr))
+            self.winmm.midiInClose(self.in_handle)
+            self.in_handle = None
+        if self.out_handle:
+            self.winmm.midiOutClose(self.out_handle)
+            self.out_handle = None
 
 
-class MidoOut(object):
-    """MIDI output through mido (macOS, Linux)."""
+class MidoMidi(object):
+    """MIDI in and out through mido (macOS, Linux)."""
 
     def __init__(self):
         try:
@@ -124,66 +271,182 @@ class MidoOut(object):
         except ImportError:
             sys.exit('needs mido: pip install mido python-rtmidi')
         self.mido = mido
-        self.port = None
-        self.ports = mido.get_output_names()
+        self.out_port = None
+        self.in_port = None
 
-    def names(self):
-        return self.ports
+    def output_names(self):
+        return self.mido.get_output_names()
 
-    def open(self, index):
-        self.port = self.mido.open_output(self.ports[index])
+    def input_names(self):
+        return self.mido.get_input_names()
+
+    def open_output(self, index):
+        self.out_port = self.mido.open_output(self.output_names()[index])
+
+    def open_input(self, index):
+        self.in_port = self.mido.open_input(self.input_names()[index])
+
+    def receive(self):
+        if not self.in_port:
+            return []
+        return [bytes(m.bytes()) for m in self.in_port.iter_pending()
+                if m.type == 'sysex']
+
+    def send_cc(self, cc, value):
+        self.out_port.send(self.mido.Message('control_change', control=cc,
+                                             value=value))
 
     def send(self, message):
-        self.port.send(self.mido.Message('sysex', data=message[1:-1]))
+        self.out_port.send(self.mido.Message('sysex', data=message[1:-1]))
 
     def close(self):
-        if self.port:
-            self.port.close()
+        for port in (self.in_port, self.out_port):
+            if port:
+                port.close()
+
+
+def find_port(names, wanted, what):
+    matches = [i for i, n in enumerate(names) if wanted.lower() in n.lower()]
+    if not matches:
+        sys.exit('no MIDI %s port matching "%s"; ports: %s'
+                 % (what, wanted, ', '.join(names) or 'none'))
+    return matches[0]
+
+
+def collect(midi, seconds):
+    """The Lich's replies over the next few seconds, as (kind, text)."""
+    replies = []
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        for m in midi.receive():
+            d = describe(m)
+            if d:
+                replies.append(d)
+        time.sleep(0.01)
+    return replies
+
+
+def print_replies(replies):
+    for kind, text in replies:
+        if kind in ('patch', 'resource'):
+            continue
+        print('  %-10s %s' % (kind, text))
+    for kind, title in (('patch', 'stored patches'),
+                        ('resource', 'stored resources')):
+        names = [text for k, text in replies if k == kind]
+        if names:
+            print('  %s:' % title)
+            for text in names:
+                print('    ' + text)
+
+
+def info(midi):
+    midi.send_cc(REQUEST_SETTINGS, 127)  # versions, message, stats, status
+    replies = collect(midi, 1.0)
+    midi.send_cc(REQUEST_SETTINGS, PRESET_NAME)
+    replies += collect(midi, 1.5)
+    midi.send_cc(REQUEST_SETTINGS, RESOURCE_NAME)
+    replies += collect(midi, 1.5)
+    if not replies:
+        print('  no reply: is the input port the Lich, and is MIDI-OX or '
+              'the OWL web page closed?')
+    print_replies(replies)
+
+
+def status_error(midi, wait):
+    """The Lich's error text, if it reports one within 'wait' seconds."""
+    midi.send_cc(REQUEST_SETTINGS, PROGRAM_STATS)
+    deadline = time.time() + wait
+    while time.time() < deadline:
+        for m in midi.receive():
+            d = describe(m)
+            if d and d[0] == 'ERROR':
+                return d[1]
+            if d and d[0] == 'program':
+                return None
+        time.sleep(0.005)
+    return None
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('file', nargs='?')
     parser.add_argument('--port', default='OWL',
-                        help='part of the MIDI output port name (default OWL)')
+                        help='part of the MIDI port names (default OWL)')
     parser.add_argument('--delay', type=float, default=10.0,
                         help='milliseconds between messages (default 10)')
     parser.add_argument('--list', action='store_true',
-                        help='list the MIDI output ports')
+                        help='list the MIDI ports')
+    parser.add_argument('--info', action='store_true',
+                        help='ask the Lich for its status')
     args = parser.parse_args()
 
-    out = WinMidiOut() if sys.platform == 'win32' else MidoOut()
-    names = out.names()
-    if args.list or not args.file:
+    midi = WinMidi() if sys.platform == 'win32' else MidoMidi()
+    outputs = midi.output_names()
+    inputs = midi.input_names()
+    if args.list or not (args.file or args.info):
         print('MIDI output ports:')
-        for n in names:
+        for n in outputs:
+            print('  ' + n)
+        print('MIDI input ports:')
+        for n in inputs:
             print('  ' + n)
         return
-    matches = [i for i, n in enumerate(names)
-               if args.port.lower() in n.lower()]
-    if not matches:
-        sys.exit('no MIDI output port matching "%s"; ports: %s'
-                 % (args.port, ', '.join(names) or 'none'))
+    out_index = find_port(outputs, args.port, 'output')
+    in_index = find_port(inputs, args.port, 'input')
 
-    messages = split_messages(open(args.file, 'rb').read())
-    if not messages:
-        sys.exit('%s holds no SysEx messages' % args.file)
+    messages = []
+    if args.file:
+        messages = split_messages(open(args.file, 'rb').read())
+        if not messages:
+            sys.exit('%s holds no SysEx messages' % args.file)
 
-    out.open(matches[0])
+    midi.open_output(out_index)
     try:
-        print('sending %d messages to %s' % (len(messages), names[matches[0]]))
+        try:
+            midi.open_input(in_index)
+        except Exception as e:
+            if args.info:
+                raise
+            print('cannot listen to the Lich (%s): sending without checking'
+                  % e)
+        if args.info:
+            print('%s says:' % outputs[out_index])
+            info(midi)
+            return
+        print('sending %d messages to %s' % (len(messages), outputs[out_index]))
+        last = messages[-1][3] if len(messages[-1]) > 3 else None
         for n, m in enumerate(messages):
-            out.send(m)
+            midi.send(m)
             time.sleep(args.delay / 1000.0)
             if n % 50 == 0 or n == len(messages) - 1:
                 print('\r  %d / %d' % (n + 1, len(messages)), end='',
                       flush=True)
-        # The last message (store or save) writes the flash: give it time
-        # before the port closes.
-        time.sleep(1.0)
+            # Between messages, ask whether the upload is still going well:
+            # a lost or damaged message stops it, and the Lich keeps
+            # showing L.
+            if n % 250 == 249 or n == len(messages) - 2:
+                err = status_error(midi, 0.5)
+                if err:
+                    print('\nthe Lich reports an error after message %d of '
+                          '%d: %s' % (n + 1, len(messages), err))
+                    print('try again with a longer --delay, e.g. --delay 30')
+                    sys.exit(1)
+        print()
+        # STORE and SAVE write the flash, then restart the patch.
+        if last in (FIRMWARE_STORE, FIRMWARE_SAVE):
+            print('writing the flash...')
+            time.sleep(3.0)
+        else:
+            time.sleep(1.0)
+        midi.receive()
+        err = status_error(midi, 2.0)
+        if err:
+            print('the Lich reports an error: %s' % err)
+            sys.exit(1)
+        print('done, no error reported')
     finally:
-        out.close()
-    print('\ndone')
+        midi.close()
 
 
 if __name__ == '__main__':
