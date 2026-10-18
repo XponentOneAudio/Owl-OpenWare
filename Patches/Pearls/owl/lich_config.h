@@ -27,6 +27,8 @@
 #define PEARLS_COLD __attribute__((noinline, optimize("Os")))
 // Delay mode: the taps worked out every 4 samples (ramps in between).
 #define BEADS_DELAY_CONTROL_RATE 4
+// Delay taps with linear interpolation (fine by ear, cheaper).
+#define BEADS_DELAY_TAPS_LINEAR
 // Cycle counts of parts of the engine (engine/pearls_profile.h).
 #if defined(__arm__) && !defined(PEARLS_NO_PROFILE)
 #define PEARLS_PROFILE

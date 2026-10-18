@@ -5,7 +5,6 @@
 #   make load       load into RAM over USB MIDI (needs FirmwareSender)
 #   make store SLOT=n   store in slot n
 #   make size       sizes against the 144 kB patch limit
-#   LINEAR_TAPS=1   delay taps with linear interpolation (see tap.h)
 #   make size LDSCRIPT=<script with a larger PATCHRAM>   sizes of a patch
 #                   that doesn't fit yet
 #
@@ -35,10 +34,15 @@ stage:
 	cp -r $(ROOT)/lich $(STAGE)/lich
 	cp -r $(ROOT)/third_party/eurorack/beads $(STAGE)/beads
 	cp -r $(ROOT)/third_party/eurorack/stmlib $(STAGE)/stmlib
-	$(if $(LINEAR_TAPS),echo '#define BEADS_DELAY_TAPS_LINEAR' >> $(STAGE)/lich_config.h)
+
+# OwlProgram's release flags (compile.mk: CPPFLAGS ?=, so taken from the
+# environment), plus PEARLS_CPPFLAGS. (-mslow-flash-data, which would avoid
+# the literal pools, needs non-PIC code: OwlProgram builds with -fpic.)
+PEARLS_CPPFLAGS ?=
 
 patch sysex load store: stage
-	$(MAKE) $(OWL_ARGS) $(if $(SLOT),SLOT=$(SLOT)) $@
+	CPPFLAGS="-O3 -ffast-math -DNDEBUG $(PEARLS_CPPFLAGS)" \
+		$(MAKE) $(OWL_ARGS) $(if $(SLOT),SLOT=$(SLOT)) $@
 
 size: patch
 	$(TOOLROOT)arm-none-eabi-size $(BUILDDIR)/patch.elf

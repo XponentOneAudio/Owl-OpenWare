@@ -26,6 +26,7 @@ extern "C" {
 float pearls_fma_loop(float a, int n);
 float pearls_fma_independent_loop(float a, int n);
 uint32_t pearls_int_loop(uint32_t x, int n);
+uint32_t pearls_mix_loop(uint32_t x, int n, const uint32_t* table);
 }
 #endif
 
@@ -154,6 +155,8 @@ class PearlsPatch : public Patch {
         int_x10;
     // The same loops through the SRAM1 alias (I-Code bus).
     int fma_alias_x10, fma_independent_alias_x10, int_alias_x10;
+    // A loop like compiled code (calibration.c), normally / alias.
+    int mix_x10, mix_alias_x10;
   };
 
   // The buffers' contents are hidden from the compiler (the asm), so that
@@ -184,6 +187,13 @@ class PearlsPatch : public Patch {
   // the patch (.text.fast), in SRAM1: n iterations of 4 dependent
   // multiply-adds, 4 independent ones, 4 dependent integer ones.
   typedef float (*FloatLoop)(float, int);
+  // A table in SRAM (with the code: the patch object is in the heap).
+  static constexpr uint32_t kMixTable[64] = {
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+    17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
+    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
+    49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64,
+  };
   typedef uint32_t (*IntLoop)(uint32_t, int);
 
   // The fewest cycles of 3 runs, with the interrupts off (each run is
@@ -243,6 +253,8 @@ class PearlsPatch : public Patch {
         fsink = fma_independent_loop(1.0f, kN); });
       const int int_chain = Cycles([&] { sink = int_loop(1, kN); });
 #ifdef __arm__
+      calibration_.mix_x10 = Cycles([&] {
+        sink = pearls_mix_loop(1, kN, kMixTable); }) * 10 / kN;
       // SYSCFG_MEMRMP: SRAM1 (0x20000000) at 0x00000000 too, where the
       // instructions are fetched through the I-Code bus instead of the
       // System bus. The firmware's vectors are at 0x08010000 (VTOR), and a
@@ -267,6 +279,11 @@ class PearlsPatch : public Patch {
           fsink = fma_independent_alias(1.0f, kN); }) * 10 / kN;
         calibration_.int_alias_x10 = Cycles([&] {
           sink = int_alias(1, kN); }) * 10 / kN;
+        typedef uint32_t (*MixLoop)(uint32_t, int, const uint32_t*);
+        MixLoop mix_alias = reinterpret_cast<MixLoop>(
+            reinterpret_cast<uintptr_t>(&pearls_mix_loop) - 0x20000000u);
+        calibration_.mix_alias_x10 = Cycles([&] {
+          sink = mix_alias(1, kN, kMixTable); }) * 10 / kN;
       }
       *memrmp = mapping;
       __asm__ volatile("dsb\n isb" : : : "memory");
@@ -321,14 +338,10 @@ class PearlsPatch : public Patch {
     // grains or delay taps (gp), the reverb (rv), the whole processor (pr),
     // the whole engine (en); the load, average and peak; the grain limit.
     char* p = message_;
-    p = Append(p, "f");
-    p = AppendInt(p, calibration_.fma_x10 / 10);
+    p = Append(p, "m");
+    p = AppendInt(p, calibration_.mix_x10 / 10);
     p = Append(p, "/");
-    p = AppendInt(p, calibration_.fma_alias_x10 / 10);
-    p = Append(p, " fi");
-    p = AppendInt(p, calibration_.fma_independent_x10 / 10);
-    p = Append(p, "/");
-    p = AppendInt(p, calibration_.fma_independent_alias_x10 / 10);
+    p = AppendInt(p, calibration_.mix_alias_x10 / 10);
     p = Append(p, " i");
     p = AppendInt(p, calibration_.int_x10 / 10);
     p = Append(p, "/");

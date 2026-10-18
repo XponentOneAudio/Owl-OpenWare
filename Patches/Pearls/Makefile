@@ -24,7 +24,7 @@ DSP_SRC = third_party/eurorack/beads/dsp/processor.cc third_party/eurorack/beads
 	third_party/eurorack/stmlib/utils/random.cc third_party/eurorack/stmlib/dsp/units.cc \
 	engine/pearls_engine.cc engine/gain_control.cc lich/lich_pearls.cc lich/wav_reader.cc
 
-.PHONY: test lich_test check patch sysex size resource m4 syx prebuilt hosttest linear-syx
+.PHONY: test lich_test check patch sysex size resource m4 syx prebuilt hosttest
 SLOT ?= 1
 test: lich_test check
 
@@ -84,17 +84,11 @@ $(BUILD)/check_sysex: tools/check_sysex.c
 	$(CC) -O2 -I$(OPENWARE_SOURCE) -o $@ tools/check_sysex.c \
 		$(OPENWARE_SOURCE)/sysex.c $(OPENWARE_SOURCE)/crc32.c
 
-# The variant with linear interpolation for the delay taps (owl/Makefile
-# LINEAR_TAPS), built before the default one.
-linear-syx:
-	$(MAKE) -C owl patch LINEAR_TAPS=1
-	python3 tools/make_sysex.py $(BUILD)/owl/patch.bin $(BUILD)/pearls-lich-linear.syx
-
-prebuilt: linear-syx syx
+prebuilt: syx
 	mkdir -p prebuilt
 	cp $(BUILD)/owl/patch.bin prebuilt/pearls-lich.bin
 	cp $(BUILD)/pearls-lich.syx $(BUILD)/pearls-lich-slot$(SLOT).syx \
-		$(BUILD)/pearls-waves.syx $(BUILD)/pearls-lich-linear.syx prebuilt/
+		$(BUILD)/pearls-waves.syx prebuilt/
 	( echo "Source: $$(git rev-parse --short HEAD)$$(git diff --quiet HEAD -- . ':!prebuilt' || echo ' (modified)')"; \
 	  echo "Toolchain: $$($(TOOLROOT)arm-none-eabi-gcc --version | head -1)"; \
 	  echo "OwlProgram: $$(git -C $(OWLPROGRAM) rev-parse --short HEAD 2>/dev/null)"; \
