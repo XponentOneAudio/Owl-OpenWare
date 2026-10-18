@@ -506,8 +506,13 @@ def main():
             time.sleep(3.0)
         else:
             time.sleep(1.0)
-        midi.receive()
-        err = status_error(midi, 2.0)
+        try:
+            midi.receive()
+            err = status_error(midi, 2.0)
+        except RuntimeError as e:
+            print('the Lich no longer answers (%s): it reset, probably '
+                  'because the patch crashed as it started' % e)
+            sys.exit(1)
         target = upload_target(messages)
         if err and 'Size mismatch' in err and target:
             # OpenWare v22.5 on the Lich reports this after every write to
