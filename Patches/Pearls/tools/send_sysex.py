@@ -77,7 +77,10 @@ def describe(message):
     body = bytes(message[4:-1])
     if cmd in (PRESET_NAME, RESOURCE_NAME) and len(body) > 1:
         index = body[0]
-        name, _, rest = body[1:].partition(b'\0')
+        name, nul, rest = body[1:].partition(b'\0')
+        if not nul:
+            # Firmware before v22 sends the name alone.
+            return 'old', name.decode('ascii', 'replace')
         size = struct.unpack('>I', decode7(rest[:5]))[0] if len(rest) >= 5 else 0
         kind = 'patch' if cmd == PRESET_NAME else 'resource'
         return kind, '%2d  %-24s %8d bytes' % (index, name.decode('ascii', 'replace'), size)
@@ -333,6 +336,10 @@ def collect(midi, seconds):
 
 
 def print_replies(replies):
+    if any(kind == 'old' for kind, _ in replies):
+        print('  This Lich runs firmware older than v22: Pearls needs v22 or '
+              'later (resources, SAVE). Update the firmware first.')
+        replies = [r for r in replies if r[0] != 'old']
     for kind, text in replies:
         if kind in ('patch', 'resource'):
             continue

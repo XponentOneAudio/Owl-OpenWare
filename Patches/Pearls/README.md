@@ -44,6 +44,15 @@ to twice the Lich's CPU. So on the Lich:
 
 ## Installing
 
+Pearls needs OpenWare firmware **v22 or later** (it was built against
+v22.5): older firmware has no resources, so it can't store the
+wavetables or samples, and answers their SAVE command with an error
+(E, or L that doesn't clear). `python tools/send_sysex.py --info` says
+if the firmware is too old. Update it with Rebel Technology's web
+firmware updater in Chrome (Web MIDI); holding the encoder while
+switching on starts the bootloader (the USB device is then called
+OWL-BOOT). The update resets the Lich's calibration.
+
 The `prebuilt/` directory has everything as SysEx files. Send them to the
 Lich over USB, one file at a time. Each file is a few hundred SysEx
 messages, which must not be sent too fast:
