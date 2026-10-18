@@ -132,8 +132,20 @@ enum TransferState {
 class Engine {
  public:
   static const int kSampleRate = 48000;
-  // Beads processes 12 frames at a time at 48 kHz (4 kHz block rate).
-  static const size_t kBlockSize = 12;
+  // Beads processes 12 frames at a time at 48 kHz (4 kHz block rate). The
+  // Lich uses 16, which divides its 32-frame audio blocks: each then does
+  // the same amount of work (with 12, they alternate between 3 and 2
+  // blocks, 12% more at peak).
+#ifndef PEARLS_BLOCK_SIZE
+#define PEARLS_BLOCK_SIZE 12
+#endif
+  static const size_t kBlockSize = PEARLS_BLOCK_SIZE;
+  // Cold digital at 32 kHz: with a block size that isn't a multiple of 3,
+  // the resamplers stream (blocks of 10 or 12 frames at 32 kHz), with a
+  // few frames of extra latency.
+  static const bool kStreaming32k = kBlockSize % 3 != 0;
+  static const size_t kMax32kBlock = (2 * kBlockSize + 2) / 3 + 1;
+  static const size_t kStreamingLatency = 4;
   // Latency added by the internal block FIFO, in frames.
   static const size_t kLatency = kBlockSize;
 
@@ -163,6 +175,9 @@ class Engine {
       size_t size);
 
   const Status& status() const { return status_; }
+
+  // Tests: blocks the streaming 32 kHz path couldn't fill (should be 0).
+  size_t streaming_underflows() const { return streaming_underflows_; }
 
   // Locks or unlocks the grain generator directly (Beads: a 4 s SEED press,
   // or SEED + FREEZE), for hosts whose SEED button is also the seed input.
@@ -217,6 +232,17 @@ class Engine {
   void UpdatePitch();
   void UpdateTapClock(bool* pulses);
   void ContinueTransfer();
+  void ResetStreaming();
+  void ProcessAudio32kStreaming(
+      beads::SeedButtonState seed_state,
+      const stmlib::GateFlags* seed,
+      const bool* freeze,
+      const beads::ModulatedParameter& d,
+      const beads::Parameters& p,
+      const beads::Processor::MixParameters& m,
+      beads::FloatFrame* in,
+      beads::FloatFrame* out,
+      bool* gate);
   static void ReadLoadArrays(const void* context, size_t frame,
                              float* l, float* r);
   void UpdateSeedButton(bool pressed, bool freeze_toggled);
@@ -253,7 +279,19 @@ class Engine {
 #define PEARLS_RESAMPLER_TAPS 192
 #endif
   RationalResampler<2, 3, PEARLS_RESAMPLER_TAPS, kBlockSize> down_;
-  RationalResampler<3, 2, PEARLS_RESAMPLER_TAPS, 2 * kBlockSize / 3> up_;
+  RationalResampler<3, 2, PEARLS_RESAMPLER_TAPS, kMax32kBlock> up_;
+
+  // Streaming 32 kHz path: input frames waiting for an even block (the
+  // 24 kHz reverb pairs samples), and the 48 kHz output FIFO.
+  size_t pending32_;
+  beads::FloatFrame pending_in32_[kMax32kBlock];
+  bool pending_freeze32_[kMax32kBlock];
+  stmlib::GateFlags pending_seed32_[kMax32kBlock];
+  static const size_t kOutFifoSize = 64;
+  size_t out48_count_;
+  beads::FloatFrame out48_[kOutFifoSize];
+  bool out48_gate_[kOutFifoSize];
+  size_t streaming_underflows_;
 
   Controls controls_;
   Status status_;

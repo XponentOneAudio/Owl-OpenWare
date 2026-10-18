@@ -85,7 +85,48 @@ class RationalResampler {
 
   void Reset() {
     std::fill(&history_[0][0], &history_[0][0] + 2 * kBufferSize, 0.0f);
+    offset_ = 0;
   }
+
+  // Lich port: processes a block of any size, carrying the position on the
+  // intermediate (L x input rate) grid over to the next block. Returns the
+  // number of output frames, which varies (e.g. 11, 11, 10 for 16 frames
+  // in at 2/3). offset() is where the first output of the next block falls
+  // on that grid, counted from its first input sample times L.
+  size_t ProcessStreaming(
+      const float* in_l, const float* in_r,
+      float* out_l, float* out_r,
+      size_t in_size) {
+    const int h = TAPS_PER_PHASE;
+    std::copy(in_l, in_l + in_size, &history_[0][h]);
+    std::copy(in_r, in_r + in_size, &history_[1][h]);
+
+    const size_t upsampled_size = in_size * L;
+    size_t n = 0;
+    size_t j = offset_;
+    for (; j < upsampled_size; j += M) {
+      const int phase = j % L;
+      const int newest = h + int(j / L);
+      const float* taps = phase_taps_[phase];
+      float acc_l = 0.0f;
+      float acc_r = 0.0f;
+      for (int q = 0; q < h; ++q) {
+        acc_l += taps[q] * history_[0][newest - q];
+        acc_r += taps[q] * history_[1][newest - q];
+      }
+      out_l[n] = acc_l;
+      out_r[n] = acc_r;
+      ++n;
+    }
+    offset_ = j - upsampled_size;
+    for (int c = 0; c < 2; ++c) {
+      std::copy(
+          &history_[c][in_size], &history_[c][in_size + h], &history_[c][0]);
+    }
+    return n;
+  }
+
+  size_t offset() const { return offset_; }
 
   // Processes one block. in_size * L must be divisible by M. Returns the
   // number of output frames (in_size * L / M).
@@ -169,6 +210,7 @@ class RationalResampler {
   static const int kBufferSize = TAPS_PER_PHASE + max_block_size + 1;
 
   float phase_taps_[L][TAPS_PER_PHASE];
+  size_t offset_;
   float history_[2][kBufferSize];
 };
 

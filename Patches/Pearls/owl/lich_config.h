@@ -7,6 +7,8 @@
 //   the internal RAM instead of the SDRAM (the biggest saving).
 // - No dummy grain players (Beads uses them to waste CPU cycles).
 // - Sample loads copy 256 frames per block (the M4 has no double FPU).
+// - The engine works in blocks of 16 frames, which divide the Lich's audio
+//   blocks (32 by default): each block then costs the same.
 // - stmlib's embedded code paths (inline vsqrt and ssat), but no .ramtext
 //   section: OWL patches run from RAM anyway.
 // - Inline fabsf (see below).
@@ -20,6 +22,9 @@
 #define BEADS_REVERB_DIVIDER 2
 #define BEADS_NO_WASTE_CPU
 #define PEARLS_TRANSFER_CHUNK 256
+#ifndef PEARLS_BLOCK_SIZE
+#define PEARLS_BLOCK_SIZE 16
+#endif
 
 #include "stmlib/stmlib.h"
 #undef IN_RAM

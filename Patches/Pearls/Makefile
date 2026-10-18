@@ -5,8 +5,7 @@
 #   make patch     the OWL patch (see owl/Makefile for OWLPROGRAM, TOOLROOT)
 #   make syx       SysEx files in build/: pearls-lich.syx (load and run),
 #                  pearls-lich-slot$(SLOT).syx (store in slot SLOT, default 1),
-#                  pearls-waves.syx (synth mode wavetables, store once),
-#                  lich-blocksize-48.syx (recommended audio block size)
+#                  pearls-waves.syx (synth mode wavetables, store once)
 #   make prebuilt  the same in prebuilt/, with the source commit
 #   make resource  the wavetable resource for synth mode
 #   make m4        Cortex-M4 CPU estimates (see tools/m4sim/Makefile)
@@ -16,7 +15,7 @@ BUILD = build
 # The Lich's DSP options (owl/lich_config.h), with stmlib's desktop code.
 DESKTOP_FLAGS = -O2 -g -Wall -Wno-unused-local-typedefs -DTEST -include cstdio \
 	-DBEADS_NO_HARDWARE_24K -DPEARLS_RESAMPLER_TAPS=96 \
-	-DPEARLS_FILTER_DESIGN_REAL=float -DBEADS_REVERB_DIVIDER=2 -DBEADS_NO_WASTE_CPU -DPEARLS_TRANSFER_CHUNK=256 \
+	-DPEARLS_FILTER_DESIGN_REAL=float -DBEADS_REVERB_DIVIDER=2 -DBEADS_NO_WASTE_CPU -DPEARLS_TRANSFER_CHUNK=256 -DPEARLS_BLOCK_SIZE=16 \
 	-I. -Ithird_party/eurorack
 DSP_SRC = third_party/eurorack/beads/dsp/processor.cc third_party/eurorack/beads/dsp/synth.cc \
 	third_party/eurorack/beads/dsp/mu_law.cc third_party/eurorack/beads/dsp/delay_clock.cc \
@@ -71,7 +70,6 @@ syx: patch resource $(BUILD)/check_sysex
 		$(BUILD)/pearls-lich-slot$(SLOT).syx --store $(SLOT)
 	python3 tools/make_sysex.py $(BUILD)/pearls-waves.res \
 		$(BUILD)/pearls-waves.syx --save pearls-waves --strip-resource-header
-	python3 tools/make_sysex.py --setting BS=48 $(BUILD)/lich-blocksize-48.syx
 	$(BUILD)/check_sysex $(BUILD)/pearls-lich.syx $(BUILD)/owl/patch.bin
 	$(BUILD)/check_sysex $(BUILD)/pearls-lich-slot$(SLOT).syx $(BUILD)/owl/patch.bin
 
@@ -86,7 +84,7 @@ prebuilt: syx
 	mkdir -p prebuilt
 	cp $(BUILD)/owl/patch.bin prebuilt/pearls-lich.bin
 	cp $(BUILD)/pearls-lich.syx $(BUILD)/pearls-lich-slot$(SLOT).syx \
-		$(BUILD)/pearls-waves.syx $(BUILD)/lich-blocksize-48.syx prebuilt/
+		$(BUILD)/pearls-waves.syx prebuilt/
 	( echo "Source: $$(git rev-parse --short HEAD)$$(git diff --quiet HEAD -- . ':!prebuilt' || echo ' (modified)')"; \
 	  echo "Toolchain: $$($(TOOLROOT)arm-none-eabi-gcc --version | head -1)"; \
 	  echo "OwlProgram: $$(git -C $(OWLPROGRAM) rev-parse --short HEAD 2>/dev/null)"; \

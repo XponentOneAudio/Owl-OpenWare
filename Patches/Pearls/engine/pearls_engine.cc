@@ -179,6 +179,8 @@ bool Engine::Init() {
 
   down_.Init(kResamplerCutoff, kResamplerKaiserBeta);
   up_.Init(kResamplerCutoff, kResamplerKaiserBeta);
+  ResetStreaming();
+  streaming_underflows_ = 0;
 
   controls_.SetDefaults();
   memset(&status_, 0, sizeof(status_));
@@ -630,6 +632,7 @@ void Engine::ApplyConfiguration() {
     processor_->Configure(Processor::Media(target_quality_), target_mono_);
     down_.Reset();
     up_.Reset();
+    ResetStreaming();
   }
   gain_control_.Init(
       float(kSampleRate),
@@ -727,6 +730,11 @@ void Engine::ProcessAudio(
     return;
   }
 
+  if (kStreaming32k) {
+    ProcessAudio32kStreaming(seed_state, seed, freeze, d, p, m, in, out, gate);
+    return;
+  }
+
   // Vintage digital: run the processor at 32 kHz, 8 frames per block.
   const size_t n = kBlockSize * 2 / 3;
   float l[kBlockSize], r[kBlockSize];
@@ -777,6 +785,105 @@ void Engine::ProcessAudio(
     out[i].r = r[i];
     gate[i] = gate32[i * n / kBlockSize];
   }
+}
+
+void Engine::ResetStreaming() {
+  pending32_ = 0;
+  // A few frames of latency, so that the varying number of 48 kHz frames
+  // each 32 kHz block gives back always covers a block.
+  out48_count_ = kStreamingLatency;
+  fill(&out48_[0], &out48_[kOutFifoSize], FloatFrame());
+  fill(&out48_gate_[0], &out48_gate_[kOutFifoSize], false);
+}
+
+void Engine::ProcessAudio32kStreaming(
+    SeedButtonState seed_state,
+    const GateFlags* seed,
+    const bool* freeze,
+    const ModulatedParameter& d,
+    const Parameters& p,
+    const Processor::MixParameters& m,
+    FloatFrame* in,
+    FloatFrame* out,
+    bool* gate) {
+  // 48 kHz -> 32 kHz. Output j of this block falls at (offset + 3 j) / 2
+  // on the 48 kHz input: the freeze and seed gates of the 48 kHz frames up
+  // to the next output go with it.
+  float l[kBlockSize], r[kBlockSize];
+  for (size_t i = 0; i < kBlockSize; ++i) {
+    l[i] = in[i].l;
+    r[i] = in[i].r;
+  }
+  const size_t offset = down_.offset();
+  float l32[kMax32kBlock], r32[kMax32kBlock];
+  const size_t n = down_.ProcessStreaming(l, r, l32, r32, kBlockSize);
+  for (size_t j = 0; j < n; ++j) {
+    const size_t first = j == 0 ? 0 : (offset + 3 * j) / 2;
+    const size_t last = j + 1 == n ? kBlockSize : (offset + 3 * (j + 1)) / 2;
+    bool f = false;
+    bool s = false;
+    for (size_t i = first; i < last; ++i) {
+      f = f || freeze[i];
+      if (seed) {
+        s = s || (seed[i] & GATE_FLAG_HIGH);
+      }
+    }
+    const size_t k = pending32_ + j;
+    pending_in32_[k].l = l32[j];
+    pending_in32_[k].r = r32[j];
+    pending_freeze32_[k] = f;
+    pending_seed32_[k] = seed_flags_previous_32k_ = ExtractGateFlags(
+        seed_flags_previous_32k_, s);
+  }
+  if (!seed) {
+    seed_flags_previous_32k_ = GATE_FLAG_LOW;
+  }
+  pending32_ += n;
+
+  // The processor, on an even number of frames.
+  const size_t count = pending32_ & ~size_t(1);
+  FloatFrame out32[kMax32kBlock];
+  bool gate32[kMax32kBlock];
+  processor_->set_gate_output(gate32);
+  processor_->Process(
+      seed_state, seed ? pending_seed32_ : NULL, pending_freeze32_, d, p, m,
+      pending_in32_, out32, count);
+  if (pending32_ > count) {
+    pending_in32_[0] = pending_in32_[count];
+    pending_freeze32_[0] = pending_freeze32_[count];
+    pending_seed32_[0] = pending_seed32_[count];
+  }
+  pending32_ -= count;
+
+  // 32 kHz -> 48 kHz, into the output FIFO. Output k falls on input
+  // (offset + 2 k) / 3, whose gate it takes.
+  for (size_t j = 0; j < count; ++j) {
+    l32[j] = out32[j].l;
+    r32[j] = out32[j].r;
+  }
+  const size_t up_offset = up_.offset();
+  float l48[kOutFifoSize], r48[kOutFifoSize];
+  const size_t produced = up_.ProcessStreaming(l32, r32, l48, r48, count);
+  for (size_t k = 0; k < produced && out48_count_ < kOutFifoSize; ++k) {
+    out48_[out48_count_].l = l48[k];
+    out48_[out48_count_].r = r48[k];
+    out48_gate_[out48_count_] = count ? gate32[std::min(
+        (up_offset + 2 * k) / 3, count - 1)] : false;
+    ++out48_count_;
+  }
+
+  // One block out.
+  const size_t available = std::min(out48_count_, size_t(kBlockSize));
+  if (available < kBlockSize) {
+    ++streaming_underflows_;
+  }
+  for (size_t i = 0; i < kBlockSize; ++i) {
+    out[i] = i < available ? out48_[i] : FloatFrame();
+    gate[i] = i < available ? out48_gate_[i] : false;
+  }
+  copy(&out48_[available], &out48_[out48_count_], &out48_[0]);
+  copy(&out48_gate_[available], &out48_gate_[out48_count_], &out48_gate_[0]);
+  out48_count_ -= available;
 }
 
 void Engine::RenderBlock() {

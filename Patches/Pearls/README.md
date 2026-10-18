@@ -32,6 +32,11 @@ to twice the Lich's CPU. So on the Lich:
   fits in the fast internal RAM. Compared with Beads' reverb, decay times
   are within 6% and levels within 1 dB, and the 8-12 kHz band is 10 dB
   lower.
+- **The engine works in blocks of 16 frames** (Beads: 12). That divides the
+  Lich's 32-frame audio blocks, so every block does the same work: with
+  12, blocks alternated between three and two engine blocks. The patch
+  works with any OpenWare block size and doesn't change it. A multiple of
+  16 (32, 48, 64...) keeps the load even.
 - **Everything else is Beads' DSP, with the same output.** The grains are
   rendered block by block, and silent taps, a silent reverb and repeated
   divisions are skipped. The tests check the output against unmodified
@@ -45,22 +50,16 @@ MIDI-OX (Windows), `amidi -p hw:1,0,0 -s file.syx` (Linux), or Rebel
 Technology's FirmwareSender. If a transfer fails, add a few milliseconds
 between messages in the tool's settings.
 
-1. **`lich-blocksize-48.syx`** (recommended, once). It sets the Lich's audio
-   block size to 48 frames (1 ms) and stores the setting. Pearls works in
-   blocks of 12 frames, so with the default 32 some blocks carry 3 of them
-   and some 2, which costs 12% of peak CPU. 48 also lowers the firmware's
-   overhead. It applies to every patch. To undo it, send a file made with
-   `tools/make_sysex.py --setting BS=32 out.syx`.
-2. **`pearls-waves.syx`** (once). It stores the wavetables of the synth
+1. **`pearls-waves.syx`** (once). It stores the wavetables of the synth
    mode in the Lich's flash, as a 100 kB resource named `pearls-waves`.
    They don't fit in the patch. Without them, everything but the synth mode
    works.
-3. **The patch.** `pearls-lich.syx` loads it and runs it from RAM, which is
+2. **The patch.** `pearls-lich.syx` loads it and runs it from RAM, which is
    good for trying it out. `pearls-lich-slot1.syx` stores it in slot 1.
    For another slot, use
    `python3 tools/make_sysex.py prebuilt/pearls-lich.bin out.syx --store N`.
    Then choose the slot with the Lich's encoder and press it to load.
-4. **Samples** (optional, see [Samples](#samples)).
+3. **Samples** (optional, see [Samples](#samples)).
 
 ## Panel
 
@@ -205,15 +204,21 @@ Estimated with `tools/m4sim`, a QEMU Cortex-M4 with the Lich's memory
 timings, as a share of the 180 MHz CPU. These are estimates (within about
 ±25%), not measurements.
 
-| Settings | With 32 grains | Governed |
-|---|---|---|
-| Granular, typical (density 3 o'clock, SIZE 0.6) | 46% (hi-fi) to 74% (cold digital) | same |
-| Granular, dense long grains (SIZE 0.8-0.95) | 128-188% | about 70-85%, ~10 grains |
-| Delay mode, with reverb | 80% (sparse) to 100% (cold digital) | not governed |
-| Wavetable synth | 60% | same |
+Each audio block must finish within its time, so the busiest block (the
+peak) matters more than the average.
+
+| Settings | Average | Busiest block | Governed |
+|---|---|---|---|
+| Granular, typical (density 3 o'clock, SIZE 0.6) | 45% (hi-fi) to 75% (cold digital) | 62-100% | same |
+| Granular, dense long grains (SIZE 0.8-0.95), 32 grains | 127-187% | 160-240% | about 10 grains, under 85% |
+| Delay mode, with reverb | 80% (sparse) to 100% (cold digital) | 93-118% | not governed |
+| Wavetable synth | 60% | 79% | same |
+
+The governor watches the busiest recent blocks, not the average.
 
 - **Delay mode is the tight spot.** Its taps can't be reduced the way
-  grains can. If the Lich glitches in delay mode, turn the reverb down
+  grains can, and its busiest blocks are estimated just over the budget.
+  If the Lich glitches in delay mode, turn the reverb down
   (with nothing sent to it, the reverb stops using CPU once its tail has
   died away), or prefer the hi-fi and sunny tape qualities.
 - **The OWL web interface shows the patch's CPU load.** Please report it,
@@ -237,7 +242,9 @@ timings, as a share of the 180 MHz CPU. These are estimates (within about
   48 kHz + 2:1 resampling path. Cold digital runs at 32 kHz through a
   96-tap polyphase resampler (192 taps on the Nebulae).
 - **Gate timing:** buttons and gates are read once per audio block (0.7 ms
-  with 32-frame blocks, 1 ms with 48).
+  with OpenWare's default 32-frame blocks).
+- **Control rate:** the engine works in 16-frame blocks (3 kHz) instead of
+  Beads' 12 (4 kHz). Triggers and gates are still placed per sample.
 - **No saving or memory** (see [Samples](#samples)).
 
 ## Building

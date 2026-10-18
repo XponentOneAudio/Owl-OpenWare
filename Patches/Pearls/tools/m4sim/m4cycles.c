@@ -47,6 +47,9 @@ static uint64_t sdram_reads;
 static uint64_t sdram_writes;
 
 static uint64_t phase_cycles[NUM_PHASES];
+// Longest single stretch of each phase (one Engine::Process call in the
+// benchmark): the peak load of a block.
+static uint64_t phase_peak[NUM_PHASES];
 static uint64_t phase_insns[NUM_PHASES];
 static uint64_t phase_reads[NUM_PHASES];
 static uint64_t phase_writes[NUM_PHASES];
@@ -97,6 +100,9 @@ static void mem_cb(unsigned int vcpu, qemu_plugin_meminfo_t info,
   uint32_t a = (uint32_t)vaddr;
   bool store = qemu_plugin_mem_is_store(info);
   if (store && a >= MARK_BASE && a < MARK_BASE + 4 * NUM_PHASES) {
+    if (cycles - phase_start_cycles > phase_peak[phase]) {
+      phase_peak[phase] = cycles - phase_start_cycles;
+    }
     phase_cycles[phase] += cycles - phase_start_cycles;
     phase_insns[phase] += insns - phase_start_insns;
     phase_reads[phase] += sdram_reads - phase_start_reads;
@@ -176,9 +182,9 @@ static void plugin_exit(qemu_plugin_id_t id, void* p) {
   if (path) f = fopen(path, "w");
   for (int i = 0; i < NUM_PHASES; ++i) {
     if (phase_insns[i]) {
-      fprintf(f, "phase %d: %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 "\n",
-              i, phase_cycles[i], phase_insns[i], phase_reads[i],
-              phase_writes[i]);
+      fprintf(f, "phase %d: %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64
+              " %" PRIu64 "\n", i, phase_cycles[i], phase_insns[i],
+              phase_reads[i], phase_writes[i], phase_peak[i]);
     }
   }
   fprintf(f, "unknown: %" PRIu64 "\n", unknown_insns);

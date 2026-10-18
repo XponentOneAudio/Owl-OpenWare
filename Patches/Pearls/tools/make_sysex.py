@@ -7,9 +7,6 @@ does what FirmwareSender does (OwlProgram's "make sysex", "make store").
   make_sysex.py patch.bin out.syx              upload and run from RAM
   make_sysex.py patch.bin out.syx --store 3    upload and store in slot 3
   make_sysex.py data.bin out.syx --save NAME   upload and save as resource NAME
-  make_sysex.py --setting BS=48 out.syx        change a device setting (here
-                                               the audio block size) and
-                                               store the settings
 
 Protocol (OpenWare Source/FirmwareLoader.hpp, MidiHandler.cpp): messages
 F0 7D 52 10 <package index> ..., index 0 carrying the size, then the data
@@ -27,8 +24,6 @@ FIRMWARE_UPLOAD = 0x10
 FIRMWARE_STORE = 0x11
 FIRMWARE_RUN = 0x12
 FIRMWARE_SAVE = 0x17  # (0x14 is FLASH ERASE)
-CONFIGURATION = 0x03
-SETTINGS_STORE = 0x16
 CHUNK = 196  # data bytes per message: 224 encoded bytes, a multiple of 8
 
 
@@ -73,31 +68,16 @@ def pack(data, store=None, save=None):
     return b''.join(msgs)
 
 
-def setting(code_value):
-    """MidiHandler::handleConfigurationCommand: two letters, then the value
-    in hexadecimal ASCII; then SETTINGS_STORE saves them to flash."""
-    code, value = code_value.split('=')
-    assert len(code) == 2 and code.isalpha()
-    payload = code.encode('ascii') + ('%x' % int(value)).encode('ascii')
-    return message(CONFIGURATION, payload) + message(SETTINGS_STORE, b'')
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
-    parser.add_argument('input', nargs='?')
-    parser.add_argument('output', nargs='?')
-    parser.add_argument('--setting', help='device setting, e.g. BS=48')
+    parser.add_argument('input')
+    parser.add_argument('output')
     group = parser.add_mutually_exclusive_group()
     group.add_argument('--store', type=int, help='patch slot to store in')
     group.add_argument('--save', help='resource name')
     parser.add_argument('--strip-resource-header', action='store_true',
                         help='input is a makeresource.py file: send its data')
     args = parser.parse_args()
-    if args.setting:
-        out = setting(args.setting)
-        open(args.input, 'wb').write(out)  # the only file argument
-        print('%s: setting %s' % (args.input, args.setting))
-        return
     data = open(args.input, 'rb').read()
     if args.strip_resource_header:
         magic, size = struct.unpack('<II', data[:8])

@@ -534,6 +534,49 @@ void TestWavetables() {
   CHECK(rig.pearls.controls().synth == rig.pearls.synth_available());
 }
 
+void TestColdDigitalStreaming() {
+  printf("cold digital: 16-frame blocks stream cleanly through 32 kHz\n");
+  Engine engine;
+  engine.Init();
+  Controls c;
+  c.SetDefaults();
+  c.quality = QUALITY_VINTAGE_DIGITAL;
+  c.dry_wet = 0.0f;   // the dry path: 12-bit at 32 kHz, then back
+  c.gain = 20;        // manual gain: no level changes
+  const int kTotal = 48000 * 3;
+  std::vector<float> out(kTotal);
+  float in_l[32], in_r[32], out_l[32], out_r[32];
+  for (int n = 0; n < kTotal; n += 32) {
+    for (int i = 0; i < 32; ++i) {
+      in_l[i] = in_r[i] = 0.02f * sinf(6.2831853f * 1000.0f * (n + i) / 48000);
+    }
+    engine.Process(c, in_l, in_r, NULL, NULL, out_l, out_r, NULL, 32);
+    std::copy(out_l, out_l + 32, &out[n]);
+  }
+  CHECK(engine.streaming_underflows() == 0 || Engine::kBlockSize % 3 == 0);
+  // The last second against the best-fitting 1 kHz sine.
+  double ss = 0, sc = 0, energy = 0;
+  const int from = kTotal - 48000;
+  for (int t = from; t < kTotal; ++t) {
+    ss += out[t] * sin(2 * M_PI * 1000.0 * t / 48000);
+    sc += out[t] * cos(2 * M_PI * 1000.0 * t / 48000);
+  }
+  ss *= 2.0 / 48000;
+  sc *= 2.0 / 48000;
+  double residual = 0;
+  for (int t = from; t < kTotal; ++t) {
+    const double fit = ss * sin(2 * M_PI * 1000.0 * t / 48000) +
+        sc * cos(2 * M_PI * 1000.0 * t / 48000);
+    residual += (out[t] - fit) * (out[t] - fit);
+    energy += fit * fit;
+  }
+  const double snr = 10 * log10(energy / (residual + 1e-30));
+  printf("  level %.4f, signal to noise %.1f dB\n",
+         sqrt(ss * ss + sc * sc), snr);
+  CHECK(sqrt(ss * ss + sc * sc) > 0.005);
+  CHECK(snr > 40.0);
+}
+
 void TestGovernor() {
   printf("governor: grain voices follow the CPU load\n");
   Rig rig;
@@ -629,6 +672,7 @@ int main(int argc, char** argv) {
   TestSamples();
   TestLeds();
   TestWavetables();
+  TestColdDigitalStreaming();
   TestGovernor();
   TestAudio();
   if (failures) {

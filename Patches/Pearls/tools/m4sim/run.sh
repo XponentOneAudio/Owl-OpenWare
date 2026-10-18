@@ -16,13 +16,14 @@ names = {}
 for l in open(b + '/out.txt'):
     m = re.match(r'config (\d+): (.{28})', l)
     if m: names[int(m.group(1))] = m.group(2).strip()
-print('%-28s %8s %8s %5s %9s' % ('config', 'Mcyc/s', 'Minsn/s', 'CPI', '% 180 MHz'))
+print('%-28s %8s %8s %5s %9s %9s' % ('config', 'Mcyc/s', 'Minsn/s', 'CPI', '% 180 MHz', 'peak blk'))
 funcs = []
 for l in open(b + '/phases.txt'):
-    m = re.match(r'phase (\d+): (\d+) (\d+) (\d+) (\d+)', l)
+    m = re.match(r'phase (\d+): (\d+) (\d+) (\d+) (\d+) (\d+)', l)
     if m and m.group(1) != '0':
         k = int(m.group(1)); c = int(m.group(2)); i = int(m.group(3))
-        print('%-28s %8.1f %8.1f %5.2f %8.0f%%' % (names.get(k, k), c/1e6, i/1e6, c/i, 100*c/180e6))
+        peak = int(m.group(6)) / (32 * 3750.0)  # a 32-frame block's budget
+        print('%-28s %8.1f %8.1f %5.2f %8.0f%% %8.0f%%' % (names.get(k, k), c/1e6, i/1e6, c/i, 100*c/180e6, 100*peak))
     f = re.match(r'func (\d+) (.*)', l)
     if f: funcs.append((int(f.group(1)), f.group(2)))
 if funcs:
