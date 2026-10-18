@@ -281,7 +281,18 @@ OpenWare gives patches no way to write the flash.
 
 ## CPU
 
-Estimated with `tools/m4sim`, a QEMU Cortex-M4 with the Lich's memory
+Measured on a Lich (firmware v22.5, hi-fi quality, the patch's own
+report):
+
+| Settings | Average | Busiest block |
+|---|---|---|
+| Granular, all knobs at noon | 39% | 46% |
+| Delay mode (SIZE fully clockwise) | 73% | 73% |
+
+Before the hi-fi processor ran through the SRAM1 alias, the same settings
+measured 47% and 105% (and delay mode overloaded, with harsh noise).
+
+The estimates below were made with `tools/m4sim`, a QEMU Cortex-M4 with the Lich's memory
 timings, as a share of a 180 MHz CPU. These are estimates, not
 measurements, and too low: the Lich runs at 168 MHz (7% less), and the
 first measurement on a Lich, 147% in delay mode, was about 1.5 times the
@@ -301,10 +312,10 @@ peak) matters more than the average.
 The governor watches the busiest recent blocks, not the average.
 
 - **Delay mode is the tight spot.** Its taps can't be reduced the way
-  grains can, and its busiest blocks are estimated just over the budget.
-  If the Lich glitches in delay mode, turn the reverb down
-  (with nothing sent to it, the reverb stops using CPU once its tail has
-  died away), or prefer the hi-fi and sunny tape qualities.
+  grains can. In hi-fi it now measures 73%; the other qualities don't run
+  through the alias. If the Lich glitches in delay mode, turn the reverb
+  down (with nothing sent to it, the reverb stops using CPU once its tail
+  has died away), or prefer the hi-fi quality.
 - **The OWL web interface shows the patch's CPU load.** Please report it,
   with the settings.
 
