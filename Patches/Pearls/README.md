@@ -48,9 +48,10 @@ The `prebuilt/` directory has everything as SysEx files. Send them to the
 Lich over USB, one file at a time. Each file is a few hundred SysEx
 messages, which must not be sent too fast:
 
-- **`tools/send_sysex.py`** paces them (10 ms apart). It needs Python 3 and
-  `pip install mido python-rtmidi`; then run
-  `python3 tools/send_sysex.py prebuilt/pearls-lich.syx`. `--list` shows
+- **`tools/send_sysex.py`** paces them (10 ms apart). On Windows it needs
+  only Python 3: it uses the Windows MIDI API directly. On macOS and Linux
+  it needs `pip install mido python-rtmidi`. Run
+  `python tools/send_sysex.py prebuilt/pearls-lich.syx`. `--list` shows
   the MIDI ports, `--port` picks one (default: the first with "OWL" in its
   name), and `--delay 20` slows down further.
 - **MIDI-OX** (Windows): "SysEx: no buffers available" means its output
