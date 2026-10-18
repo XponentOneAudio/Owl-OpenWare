@@ -69,21 +69,36 @@ def decode7(data):
     return bytes(out)
 
 
+def parse_name(message):
+    """A patch or resource name reply as (kind, index, name, size), or
+    None. kind is 'old' for firmware before v22, which sends no size."""
+    if len(message) < 7 or message[1] != MANUFACTURER:
+        return None
+    cmd = message[3]
+    if cmd not in (PRESET_NAME, RESOURCE_NAME):
+        return None
+    body = bytes(message[4:-1])
+    index = body[0]
+    name, nul, rest = body[1:].partition(b'\0')
+    name = name.decode('ascii', 'replace')
+    if not nul:
+        return 'old', index, name, 0
+    size = struct.unpack('>I', decode7(rest[:5]))[0] if len(rest) >= 5 else 0
+    return 'patch' if cmd == PRESET_NAME else 'resource', index, name, size
+
+
 def describe(message):
     """A Lich reply as (kind, text), or None for anything else."""
     if len(message) < 5 or message[1] != MANUFACTURER:
         return None
     cmd = message[3]
     body = bytes(message[4:-1])
-    if cmd in (PRESET_NAME, RESOURCE_NAME) and len(body) > 1:
-        index = body[0]
-        name, nul, rest = body[1:].partition(b'\0')
-        if not nul:
-            # Firmware before v22 sends the name alone.
-            return 'old', name.decode('ascii', 'replace')
-        size = struct.unpack('>I', decode7(rest[:5]))[0] if len(rest) >= 5 else 0
-        kind = 'patch' if cmd == PRESET_NAME else 'resource'
-        return kind, '%2d  %-24s %8d bytes' % (index, name.decode('ascii', 'replace'), size)
+    named = parse_name(message)
+    if named:
+        kind, index, name, size = named
+        if kind == 'old':
+            return kind, name
+        return kind, '%2d  %-24s %8d bytes' % (index, name, size)
     text = body.decode('ascii', 'replace')
     kinds = {FIRMWARE_VERSION: 'firmware', BOOTLOADER_VERSION: 'bootloader',
              PROGRAM_MESSAGE: 'message', DEVICE_STATS: 'device',
@@ -381,6 +396,36 @@ def status_error(midi, wait):
     return None
 
 
+def stored(midi, kind):
+    """The Lich's stored patches or resources, as (index, name, size)."""
+    midi.receive()
+    midi.send_cc(REQUEST_SETTINGS,
+                 PRESET_NAME if kind == 'patch' else RESOURCE_NAME)
+    found = []
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        for m in midi.receive():
+            named = parse_name(m)
+            if named and named[0] == kind:
+                found.append(named[1:])
+        time.sleep(0.01)
+    return found
+
+
+def upload_target(messages):
+    """What the upload stores: ('patch', slot, size), ('resource', name,
+    size), or None."""
+    first, last = messages[0], messages[-1]
+    if len(first) < 15 or first[3] != FIRMWARE_UPLOAD:
+        return None
+    size = struct.unpack('>I', decode7(first[9:14]))[0]
+    if last[3] == FIRMWARE_STORE:
+        return 'patch', struct.unpack('>I', decode7(last[4:9]))[0], size
+    if last[3] == FIRMWARE_SAVE:
+        return 'resource', bytes(last[4:-1]).split(b'\0')[0].decode('ascii'), size
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('file', nargs='?')
@@ -463,6 +508,25 @@ def main():
             time.sleep(1.0)
         midi.receive()
         err = status_error(midi, 2.0)
+        target = upload_target(messages)
+        if err and 'Size mismatch' in err and target:
+            # OpenWare v22.5 on the Lich reports this after every write to
+            # its SPI flash (it checks a stale copy of the header), though
+            # the write succeeded. Check what was stored instead.
+            kind, key, size = target
+            entries = stored(midi, kind)
+            ok = any((index == key if kind == 'patch' else name == key)
+                     and stored_size == size
+                     for index, name, stored_size in entries)
+            if ok:
+                print('stored: %s %s, %d bytes. (The Lich also reports '
+                      '"%s": a false alarm of firmware v22.5, which shows '
+                      'E; press the encoder to clear it.)'
+                      % (kind, key, size, err))
+                return
+            print('the Lich reports an error: %s, and the %s is not stored'
+                  % (err, kind))
+            sys.exit(1)
         if err:
             print('the Lich reports an error: %s' % err)
             sys.exit(1)

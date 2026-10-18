@@ -103,6 +103,7 @@ MIDI-OX and the OWL web page first: on Windows they can hold the ports.
 |---|---|
 | SysEx package out of sequence, Invalid SysEx checksum | A message was lost or damaged: send the file again with `--delay 30` |
 | Memory overflow, malloc failed | The patch ran out of memory: send `--info` output |
+| Size mismatch | A false alarm of firmware v22.5 on the Lich after every flash write (it checks a stale header); the data is stored. `send_sysex.py` checks the stored size and says so |
 | No free resources, Write failed, Data mismatch | The flash is full or failing |
 | Invalid STORE/SAVE command | The transfer before it failed |
 | Preventing reset program from starting | The patch crashed or overloaded the module, the watchdog reset it, and the firmware won't start that patch again |
