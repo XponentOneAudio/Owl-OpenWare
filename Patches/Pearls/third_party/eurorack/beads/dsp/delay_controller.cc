@@ -57,6 +57,10 @@ void DelayController::Init(float sample_rate, int max_delay) {
     tap_envelope_[i].Init();
     tap_delay_time_[i] = 0.0f;
   }
+  taps_valid_ = false;
+  envelope_shape_valid_ = false;
+  ratio_density_ = -1.0f;
+  ratio_fm_ = -1.0f;
   
   position_modulation_.Init(0.1f / sample_rate);
   shape_modulation_.Init(0.1f / sample_rate);
@@ -203,21 +207,30 @@ void DelayController::RenderInternal(
       tap = false; // The tap is recorded only once!
       
       // Use density to select a ratio, and FM to further multiply/divide it.
-      float ratio = density * float(kNumDelayRatios);
-      MAKE_INTEGRAL_FRACTIONAL(ratio);
-      ratio_fractional -= 0.5f;
-      ratio_fractional *= density < 0.5f ? 4.0f : 1.5f;
-      ratio_fractional += 0.5f;
-      CONSTRAIN(ratio_fractional, 0.0f, 1.0f);
-  
-      int flip = ratio_integral & 1;
-      tap_ratio[flip] = kRatio[ratio_integral];
-      tap_ratio[1 - flip] = kRatio[ratio_integral + 1];
-      tap_gain[flip] = 1.0f - ratio_fractional;
-      tap_gain[1 - flip] = ratio_fractional;
-      
-      tap_ratio[0] *= fm;
-      tap_ratio[1] *= fm;
+      // Lich port: only when density or FM change (same values).
+      if (density != ratio_density_ || fm != ratio_fm_) {
+        ratio_density_ = density;
+        ratio_fm_ = fm;
+        float ratio = density * float(kNumDelayRatios);
+        MAKE_INTEGRAL_FRACTIONAL(ratio);
+        ratio_fractional -= 0.5f;
+        ratio_fractional *= density < 0.5f ? 4.0f : 1.5f;
+        ratio_fractional += 0.5f;
+        CONSTRAIN(ratio_fractional, 0.0f, 1.0f);
+    
+        int flip = ratio_integral & 1;
+        ratio_tap_ratio_[flip] = kRatio[ratio_integral];
+        ratio_tap_ratio_[1 - flip] = kRatio[ratio_integral + 1];
+        ratio_tap_gain_[flip] = 1.0f - ratio_fractional;
+        ratio_tap_gain_[1 - flip] = ratio_fractional;
+        
+        ratio_tap_ratio_[0] *= fm;
+        ratio_tap_ratio_[1] *= fm;
+      }
+      tap_ratio[0] = ratio_tap_ratio_[0];
+      tap_ratio[1] = ratio_tap_ratio_[1];
+      tap_gain[0] = ratio_tap_gain_[0];
+      tap_gain[1] = ratio_tap_gain_[1];
     } else {
       const float new_interval = max(
           float(kMinDelay),
@@ -312,6 +325,7 @@ void DelayController::RenderInternal(
           tap_envelope_[i].Init();
           tap_delay_time_[i] = 0.0f;
         }
+        taps_valid_ = false;
       }
 
       // Reset and resync the envelopes that will be faded-in.
@@ -321,6 +335,7 @@ void DelayController::RenderInternal(
           tap_envelope_[i].Init();
           tap_delay_time_[i] = 0.0f;
         }
+        taps_valid_ = false;
       }
       
       ONE_POLE(multiplier_lp_, slice_modulation, 0.01f);
@@ -331,36 +346,90 @@ void DelayController::RenderInternal(
       multiplier_fractional = 0.5f + 8.0f * (multiplier_fractional - 0.5f);
       CONSTRAIN(multiplier_fractional, 0.0f, 1.0f);
       
-      float loudest = 0.0f;
-      int loudest_index = 0;
-      const TapEnvelope::Shape envelope_shape = TapEnvelope::ComputeShape(shape);
-      
-      for (int t = 0; t < NUM_TAPS; ++t) {
-        const int interval = t / NUM_HEADS;
-        const int ratio = (t / NUM_INTERVALS) % NUM_RATIOS;
-        const int tap = t & 1;
-        const int i = (2 * ratio + ((multiplier_integral & 1)
-            ? tap
-            : (1 - tap))) + interval * NUM_HEADS;
-          
-        float delay_time = clock_.interval(interval) * tap_ratio[ratio] * float(
-              multiplier_integral + tap);
+      // Lich port: the envelope shape only when it changes.
+      if (shape != envelope_shape_.shape || !envelope_shape_valid_) {
+        envelope_shape_ = TapEnvelope::ComputeShape(shape);
+        envelope_shape_valid_ = true;
+      }
+      const TapEnvelope::Shape& envelope_shape = envelope_shape_;
 
-        CONSTRAIN(delay_time, kMinDelay, max_delay_);
+      // Lich port: the taps' delays, then their gains, only when what they
+      // depend on changes (otherwise, each sample only renders the
+      // envelopes). Same values.
+      const float interval_0 = clock_.interval(0);
+      const float interval_1 = clock_.interval(1);
+      if (!taps_valid_ ||
+          multiplier_integral != taps_multiplier_integral_ ||
+          tap_ratio[0] != taps_ratio_[0] || tap_ratio[1] != taps_ratio_[1] ||
+          interval_0 != taps_interval_[0] || interval_1 != taps_interval_[1]) {
+        taps_multiplier_integral_ = multiplier_integral;
+        taps_ratio_[0] = tap_ratio[0];
+        taps_ratio_[1] = tap_ratio[1];
+        taps_interval_[0] = interval_0;
+        taps_interval_[1] = interval_1;
+        for (int t = 0; t < NUM_TAPS; ++t) {
+          const int interval = t / NUM_HEADS;
+          const int ratio = (t / NUM_INTERVALS) % NUM_RATIOS;
+          const int tap = t & 1;
+          const int i = (2 * ratio + ((multiplier_integral & 1)
+              ? tap
+              : (1 - tap))) + interval * NUM_HEADS;
+            
+          float delay_time = clock_.interval(interval) * tap_ratio[ratio] * \
+              float(multiplier_integral + tap);
 
-        // Lich port: the reciprocal only when the delay changes.
-        if (delay_time != tap_delay_time_[i]) {
-          tap_delay_time_[i] = delay_time;
-          tap_envelope_[i].set_phase_increment(1.0f / delay_time);
+          CONSTRAIN(delay_time, kMinDelay, max_delay_);
+
+          // The reciprocal only when the delay changes.
+          if (delay_time != tap_delay_time_[i]) {
+            tap_delay_time_[i] = delay_time;
+            tap_envelope_[i].set_phase_increment(1.0f / delay_time);
+          }
+          taps_delay_[i] = int32_t(delay_time * 1024.0f);
         }
-        out->tap[i].delay = int32_t(delay_time * 1024.0f);
-        
-        const float ratio_fade = tap
-            ? multiplier_fractional
-            : 1.0f - multiplier_fractional;
-        const float base_gain = tap_gain[ratio] * ratio_fade * \
-            clock_.gain(interval);
-        // Lich port: a silent tap's envelope (never negative) only advances.
+      }
+      const float clock_gain_0 = clock_.gain(0);
+      const float clock_gain_1 = clock_.gain(1);
+      if (!taps_valid_ ||
+          multiplier_integral != taps_gain_multiplier_integral_ ||
+          multiplier_fractional != taps_multiplier_fractional_ ||
+          tap_gain[0] != taps_gain_[0] || tap_gain[1] != taps_gain_[1] ||
+          clock_gain_0 != taps_clock_gain_[0] ||
+          clock_gain_1 != taps_clock_gain_[1]) {
+        taps_gain_multiplier_integral_ = multiplier_integral;
+        taps_multiplier_fractional_ = multiplier_fractional;
+        taps_gain_[0] = tap_gain[0];
+        taps_gain_[1] = tap_gain[1];
+        taps_clock_gain_[0] = clock_gain_0;
+        taps_clock_gain_[1] = clock_gain_1;
+        float loudest = 0.0f;
+        int loudest_index = 0;
+        for (int t = 0; t < NUM_TAPS; ++t) {
+          const int interval = t / NUM_HEADS;
+          const int ratio = (t / NUM_INTERVALS) % NUM_RATIOS;
+          const int tap = t & 1;
+          const int i = (2 * ratio + ((multiplier_integral & 1)
+              ? tap
+              : (1 - tap))) + interval * NUM_HEADS;
+          const float ratio_fade = tap
+              ? multiplier_fractional
+              : 1.0f - multiplier_fractional;
+          const float base_gain = tap_gain[ratio] * ratio_fade * \
+              clock_.gain(interval);
+          taps_base_gain_[i] = base_gain;
+          if (base_gain > loudest) {
+            loudest = base_gain;
+            loudest_index = i;
+          }
+        }
+        taps_loudest_ = loudest_index;
+      }
+      taps_valid_ = true;
+
+      for (int i = 0; i < NUM_TAPS; ++i) {
+        out->tap[i].delay = taps_delay_[i];
+        const float base_gain = taps_base_gain_[i];
+        // A silent tap's envelope (never negative) only advances.
         if (base_gain == 0.0f) {
           tap_envelope_[i].Advance();
           out->tap[i].gain = 0.0f;
@@ -368,12 +437,8 @@ void DelayController::RenderInternal(
           out->tap[i].gain = base_gain * tap_envelope_[i].Render(
               envelope_shape);
         }
-        if (base_gain > loudest) {
-          loudest = base_gain;
-          loudest_index = i;
-        }
       }
-      out->gate = tap_envelope_[loudest_index].phase() < 0.5f;
+      out->gate = tap_envelope_[taps_loudest_].phase() < 0.5f;
     }
 
     freeze_ = *freeze;

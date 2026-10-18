@@ -117,13 +117,13 @@ The patch guards against overload: after 16 late blocks in a row it
 skips one (a short dropout), so that the firmware keeps running.
 
 `--info` also shows the patch's own report (`message`), refreshed twice
-a second, for instance `r14 s9 c12 f15 dc12 gp90 rv8 pr120 en130 cpu147/150 g4`:
+a second, for instance `r20 s0 f34 fi16 i9 dc30 gp60 rv0 pr95 en105 cpu110/112 g4`:
 
 - `r`, `s`: extra cycles of a read from the SDRAM over one from the
-  internal CCM memory, at random addresses and sequentially; `c`: cycles
-  per 32-bit word of a copy from the SDRAM; `f`: cycles of a loop of 4
-  multiply-adds. Measured once at startup, to calibrate the CPU
-  estimates below.
+  internal CCM memory, at random addresses and sequentially; `f`, `fi`,
+  `i`: cycles of a loop of 4 multiply-adds, dependent (each waits for the
+  previous), independent, and on integers. Measured once at startup with
+  the interrupts off, to calibrate the CPU estimates below.
 - Percent of the CPU time: `dc` the delay controller (or the grain
   triggers), `gp` the grains or delay taps and the delay line, `rv` the
   reverb, `pr` all of the Beads processor, `en` all of the engine; `cpu`

@@ -32,3 +32,15 @@ void free(void* p) {
     vPortFree(p);
   }
 }
+
+// The unwinding personality routines that the unwind tables of libgcc and
+// newlib refer to. The patch is built without exceptions and never
+// unwinds: without these, the linker keeps libgcc's unwinder (4.7 kB).
+void __aeabi_unwind_cpp_pr0(void) {
+}
+
+void __aeabi_unwind_cpp_pr1(void) {
+}
+
+void __aeabi_unwind_cpp_pr2(void) {
+}

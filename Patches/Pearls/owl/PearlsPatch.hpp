@@ -142,7 +142,8 @@ class PearlsPatch : public Patch {
   // SDRAM, and the cycles per iteration of a loop of 4 dependent fused
   // multiply-adds. Reported with the load (send_sysex.py --info).
   struct Calibration {
-    int random_x10, sequential_x10, copy_x10, fma_x10;
+    int random_x10, sequential_x10, copy_x10, fma_x10, fma_independent_x10,
+        int_x10;
   };
 
   // The buffers' contents are hidden from the compiler (the asm), so that
@@ -183,14 +184,51 @@ class PearlsPatch : public Patch {
     return a;
   }
 
-  // The fewest cycles of 3 runs (interrupts only add).
+  // 4 independent multiply-adds per iteration (throughput, not latency).
+  static __attribute__((noinline)) float FmaIndependent(float a, int n) {
+    volatile float vb = 0.9999f;
+    volatile float vc = 0.0001f;
+    const float b = vb;
+    const float c = vc;
+    float a1 = a, a2 = a, a3 = a, a4 = a;
+    for (int i = 0; i < n; ++i) {
+      a1 = a1 * b + c;
+      a2 = a2 * b + c;
+      a3 = a3 * b + c;
+      a4 = a4 * b + c;
+    }
+    return a1 + a2 + a3 + a4;
+  }
+
+  // 4 dependent integer multiply-adds per iteration.
+  static __attribute__((noinline)) uint32_t IntChain(uint32_t x, int n) {
+    volatile uint32_t vb = 3;
+    const uint32_t b = vb;
+    for (int i = 0; i < n; ++i) {
+      x = x * b + 1;
+      x = x * b + 1;
+      x = x * b + 1;
+      x = x * b + 1;
+    }
+    return x;
+  }
+
+  // The fewest cycles of 3 runs, with the interrupts off (each run is
+  // under a millisecond).
   template<typename F>
   __attribute__((noinline)) int Cycles(F f) {
     int best = 0x7fffffff;
     for (int k = 0; k < 3; ++k) {
+#ifdef __arm__
+      __asm__ volatile("cpsid i" : : : "memory");
+#endif
       const int start = getElapsedCycles();
       f();
-      best = std::min(best, getElapsedCycles() - start);
+      const int cycles = getElapsedCycles() - start;
+#ifdef __arm__
+      __asm__ volatile("cpsie i" : : : "memory");
+#endif
+      best = std::min(best, cycles);
     }
     return best;
   }
@@ -219,12 +257,17 @@ class PearlsPatch : public Patch {
         sink = ccm[7]; });
       volatile float fsink = 0.0f;
       const int fma = Cycles([&] { fsink = Fma(1.0f, kN); });
+      const int fma_independent = Cycles([&] {
+        fsink = FmaIndependent(1.0f, kN); });
+      const int int_chain = Cycles([&] { sink = IntChain(1, kN); });
       (void)sink;
       (void)fsink;
       calibration_.random_x10 = (random_ext - random_ccm) * 10 / kN;
       calibration_.sequential_x10 = (seq_ext - seq_ccm) * 10 / kN;
       calibration_.copy_x10 = copy * 10 / (4 * kCcmWords);
       calibration_.fma_x10 = fma * 10 / kN;
+      calibration_.fma_independent_x10 = fma_independent * 10 / kN;
+      calibration_.int_x10 = int_chain * 10 / kN;
     }
     free(ext);
     free(ccm);
@@ -261,7 +304,8 @@ class PearlsPatch : public Patch {
     if (++report_blocks_ * size < int(getSampleRate()) / 2) {
       return;
     }
-    // Cycles per access (r, s, c), per loop (f); percent of the block
+    // Cycles per access (r, s), per loop of 4 multiply-adds (f dependent,
+    // fi independent, i integer); percent of the block
     // budget, averaged: the delay controller or grain triggers (dc), the
     // grains or delay taps (gp), the reverb (rv), the whole processor (pr),
     // the whole engine (en); the load, average and peak; the grain limit.
@@ -270,10 +314,12 @@ class PearlsPatch : public Patch {
     p = AppendInt(p, calibration_.random_x10 / 10);
     p = Append(p, " s");
     p = AppendInt(p, calibration_.sequential_x10 / 10);
-    p = Append(p, " c");
-    p = AppendInt(p, calibration_.copy_x10 / 10);
     p = Append(p, " f");
     p = AppendInt(p, calibration_.fma_x10 / 10);
+    p = Append(p, " fi");
+    p = AppendInt(p, calibration_.fma_independent_x10 / 10);
+    p = Append(p, " i");
+    p = AppendInt(p, calibration_.int_x10 / 10);
 #ifdef PEARLS_PROFILE
     static const char* const kSlotNames[PEARLS_PROFILE_NUM_SLOTS] = {
       " dc", " gp", " rv", " pr", " en"

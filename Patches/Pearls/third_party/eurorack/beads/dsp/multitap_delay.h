@@ -49,6 +49,7 @@ class MultitapDelay {
     for (int i = 0; i < 2; ++i) {
       filter_[i].Init();
     }
+    bandwidth_valid_ = false;
   }
   
   inline void Reset() {
@@ -88,20 +89,26 @@ class MultitapDelay {
     }
 
 #ifdef ENABLE_BANDWIDTH_CONTROL
-    const float amount = fabsf(2.0f * bandwidth - 1.0f);
-    
-    // LP: -7 to -2 octaves
-    // HP: -8 to -3 octaves
-    const float octave = bandwidth < 0.5f
-        ? -7.0f + bandwidth * 10.0f
-        : -8.0f + (bandwidth - 0.5f) * 10.0f;
-    const float f = 0.49f * stmlib::SemitonesToRatio(12.0f * octave);
-    const float q = 1.0f + 16.0f * amount * f;
-    const float wet_amount_sqrt = amount * (2.0f - amount);
-    const float wet_amount = wet_amount_sqrt * (2.0f - wet_amount_sqrt);
-    
-    filter_[0].set_f_q<stmlib::FREQUENCY_FAST>(f, q);
-    filter_[1].set(filter_[0]);
+    // Lich port: the filter's coefficients only when the bandwidth changes.
+    if (bandwidth != bandwidth_ || !bandwidth_valid_) {
+      bandwidth_ = bandwidth;
+      bandwidth_valid_ = true;
+      const float amount = fabsf(2.0f * bandwidth - 1.0f);
+      
+      // LP: -7 to -2 octaves
+      // HP: -8 to -3 octaves
+      const float octave = bandwidth < 0.5f
+          ? -7.0f + bandwidth * 10.0f
+          : -8.0f + (bandwidth - 0.5f) * 10.0f;
+      const float f = 0.49f * stmlib::SemitonesToRatio(12.0f * octave);
+      const float q = 1.0f + 16.0f * amount * f;
+      const float wet_amount_sqrt = amount * (2.0f - amount);
+      wet_amount_ = wet_amount_sqrt * (2.0f - wet_amount_sqrt);
+      
+      filter_[0].set_f_q<stmlib::FREQUENCY_FAST>(f, q);
+      filter_[1].set(filter_[0]);
+    }
+    const float wet_amount = wet_amount_;
     
     FloatFrame wet;
     if (bandwidth < 0.5f) {
@@ -121,6 +128,9 @@ class MultitapDelay {
   Tap<2048> tap_[DelayController::NUM_TAPS];
   Tap<1> no_latency_tap_[DelayController::NUM_TAPS];
   stmlib::Svf filter_[2];
+  float bandwidth_;  // Lich port: of the filter's coefficients
+  float wet_amount_;
+  bool bandwidth_valid_;
 
   DISALLOW_COPY_AND_ASSIGN(MultitapDelay);
 };

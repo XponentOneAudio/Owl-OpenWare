@@ -294,6 +294,25 @@ class DelayController {
 
   TapEnvelope tap_envelope_[NUM_TAPS];
   float tap_delay_time_[NUM_TAPS];  // Lich port: of each phase increment
+
+  // Lich port: values computed again only when their inputs change.
+  float ratio_density_;
+  float ratio_fm_;
+  float ratio_tap_ratio_[NUM_RATIOS];
+  float ratio_tap_gain_[NUM_RATIOS];
+  TapEnvelope::Shape envelope_shape_;
+  bool envelope_shape_valid_;
+  bool taps_valid_;
+  int taps_multiplier_integral_;
+  int taps_gain_multiplier_integral_;
+  float taps_multiplier_fractional_;
+  float taps_ratio_[NUM_RATIOS];
+  float taps_gain_[NUM_RATIOS];
+  float taps_interval_[2];
+  float taps_clock_gain_[2];
+  int32_t taps_delay_[NUM_TAPS];
+  float taps_base_gain_[NUM_TAPS];
+  int taps_loudest_;
   
   RandomWalkModulation position_modulation_;
   RandomWalkModulation shape_modulation_;

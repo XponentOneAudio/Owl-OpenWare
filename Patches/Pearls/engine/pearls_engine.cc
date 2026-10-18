@@ -329,8 +329,19 @@ void Engine::ContinueTransfer() {
     const float rate = processor_->buffer_sample_rate();
     // Source frames per buffer frame, in 32.32 fixed point (no double
     // precision: software floating point on the Lich, 3 kB of code).
-    const uint64_t step =
-        (uint64_t(uint32_t(transfer_source_rate_)) << 32) / uint32_t(rate);
+    // (Long division with 32-bit operations: a 64-bit one brings in 3 kB of
+    // libgcc.)
+    const uint32_t source_rate = uint32_t(transfer_source_rate_);
+    const uint32_t buffer_rate = uint32_t(rate);
+    uint32_t remainder = source_rate % buffer_rate;
+    uint32_t fraction = 0;
+    for (int bits = 0; bits < 32; bits += 8) {
+      remainder <<= 8;  // < 2^25: the rates are under 2^17
+      fraction = (fraction << 8) | (remainder / buffer_rate);
+      remainder %= buffer_rate;
+    }
+    const uint64_t step = (uint64_t(source_rate / buffer_rate) << 32) |
+        fraction;
     if (!transfer_started_) {
       processor_->TrimBuffer();
       transfer_rate_ = rate;
@@ -339,7 +350,8 @@ void Engine::ContinueTransfer() {
       // Leave room for the interpolation tail: a full buffer would wrap.
       const size_t capacity = size_t(processor_->buffer_capacity()) - 8;
       const size_t converted = size_t(
-          (uint64_t(transfer_source_frames_ - 1) << 32) / step) + 1;
+          float(transfer_source_frames_ - 1) * rate / transfer_source_rate_)
+          + 1;
       transfer_target_frames_ = min(capacity, converted);
       transfer_started_ = true;
     }
