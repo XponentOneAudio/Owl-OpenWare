@@ -32,6 +32,8 @@
 
 #include "beads/dsp/mu_law.h"
 
+#include "engine/pearls_profile.h"  // Lich port
+
 namespace beads {
 
 const float kDelayModeTransitionTime = 1.5f;  // seconds
@@ -110,6 +112,7 @@ void Processor::Process(
     const FloatFrame* in,
     FloatFrame* out,
     size_t size) {
+  PEARLS_PROFILE_START(processor_start);  // Lich port
   const float delay_mode = delay_mode_transition_ > 0.0f;
   const float threshold = delay_mode ? 0.98f : 0.99f;
   const float direction = parameters.size.base > threshold ? 1.0f : -1.0f;
@@ -130,6 +133,7 @@ void Processor::Process(
   DelayController::Output* taps = &taps_buffer[0];
   
   // Extract grain triggers.
+  PEARLS_PROFILE_START(controller_start);
   if (delay_mode) {
     triggers = NULL;
     delay_controller_.Render(
@@ -161,10 +165,12 @@ void Processor::Process(
     }
   }
   
+  PEARLS_PROFILE_ADD(PEARLS_PROFILE_CONTROLLER, controller_start);
   FloatFrame dry_signal[size];
   
   // Granular processing.
   const float feedback = mix_parameters.feedback;
+  PEARLS_PROFILE_START(granular_start);
   switch (media_) {
     case MEDIA_DIGITAL:
       processor_digital_.Process(
@@ -202,6 +208,7 @@ void Processor::Process(
       }
       break;
   }
+  PEARLS_PROFILE_ADD(PEARLS_PROFILE_GRANULAR, granular_start);
   
   // Fade-out / Fade-in the dry signal when switching between granular and
   // Delay mode.
@@ -241,7 +248,9 @@ void Processor::Process(
       : (0.3f + 0.6f * reverb_time));
   reverb_.set_lp(
       caveman ? 0.4f : (media_ == MEDIA_VINTAGE_DIGITAL ? 0.75f : 0.6f));
+  PEARLS_PROFILE_START(reverb_start);
   reverb_.Process(out, size);
+  PEARLS_PROFILE_ADD(PEARLS_PROFILE_REVERB, reverb_start);
   
   // Final clipping/limiting
   output_limiter_.Process(out, size);
@@ -256,6 +265,7 @@ void Processor::Process(
       out[i].r = gate_out[i] ? -0.8f : 0.0f;
     }
   }
+  PEARLS_PROFILE_ADD(PEARLS_PROFILE_PROCESSOR, processor_start);
 }
 
 }  // namespace beads

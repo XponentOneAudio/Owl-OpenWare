@@ -22,6 +22,10 @@
 #define BEADS_REVERB_DIVIDER 2
 #define BEADS_NO_WASTE_CPU
 #define PEARLS_TRANSFER_CHUNK 256
+// Cycle counts of parts of the engine (engine/pearls_profile.h).
+#if defined(__arm__) && !defined(PEARLS_NO_PROFILE)
+#define PEARLS_PROFILE
+#endif
 #ifndef PEARLS_BLOCK_SIZE
 #define PEARLS_BLOCK_SIZE 16
 #endif

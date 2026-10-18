@@ -348,26 +348,8 @@ class GranularProcessor {
             &stereo_delay_line_, triggers, freeze, parameters, out, size);
       }
     }
-    // Lich port: the taps too, when they read no frame the block writes.
-    FloatFrame tap_mix[size ? size : 1];
-    float tap_bandwidth[size ? size : 1];
-    bool taps_rendered = false;
-    if (taps && size) {
-      taps_rendered = mono
-          ? RenderTapsBlock(&mono_delay_line_, taps, freeze, &speed_modulation,
-                            &bandwidth_modulation, tap_mix, tap_bandwidth,
-                            size)
-          : RenderTapsBlock(&stereo_delay_line_, taps, freeze,
-                            &speed_modulation, &bandwidth_modulation, tap_mix,
-                            tap_bandwidth, size);
-    }
-    size_t sample = 0;
 #else
     const bool grains_rendered = false;
-    const bool taps_rendered = false;
-    FloatFrame tap_mix[1];
-    float tap_bandwidth[1];
-    size_t sample = 0;
 #endif  // BEADS_PER_SAMPLE_GRAINS
 
     while (size--) {
@@ -403,22 +385,13 @@ class GranularProcessor {
               parameters,
               out);
         }
-        if (taps && taps_rendered) {
-          multitap_delay_.Finish(tap_mix[sample], tap_bandwidth[sample], out);
-        } else if (taps) {
-#ifndef BEADS_PER_SAMPLE_GRAINS
-          const float speed = speed_modulation.Next();
-          RenderTapsSample(
-              &mono_delay_line_, taps, speed, bandwidth_modulation.Next(),
-              out);
-#else
+        if (taps) {
           multitap_delay_.Render(
               &mono_delay_line_,
               *taps,
               speed_modulation.Next(),
               bandwidth_modulation.Next(),
               out);
-#endif  // BEADS_PER_SAMPLE_GRAINS
         }
       } else {
         stereo_delay_line_.Write(s, *freeze);
@@ -429,22 +402,13 @@ class GranularProcessor {
               parameters,
               out);
         }
-        if (taps && taps_rendered) {
-          multitap_delay_.Finish(tap_mix[sample], tap_bandwidth[sample], out);
-        } else if (taps) {
-#ifndef BEADS_PER_SAMPLE_GRAINS
-          const float speed = speed_modulation.Next();
-          RenderTapsSample(
-              &stereo_delay_line_, taps, speed, bandwidth_modulation.Next(),
-              out);
-#else
+        if (taps) {
           multitap_delay_.Render(
               &stereo_delay_line_,
               *taps,
               speed_modulation.Next(),
               bandwidth_modulation.Next(),
               out);
-#endif  // BEADS_PER_SAMPLE_GRAINS
         }
       }
       
@@ -469,45 +433,7 @@ class GranularProcessor {
       ++freeze;
       ++in;
       ++out;
-      ++sample;
     }
-    (void)sample;
-    (void)tap_mix;
-    (void)tap_bandwidth;
-  }
-
-  // Lich port: the tap mixes of a block, before the block is written (see
-  // MultitapDelay::RenderTapsBlock).
-  template<typename DelayLineType>
-  inline bool RenderTapsBlock(
-      const DelayLineType* delay_line,
-      const DelayController::Output* taps,
-      const bool* freeze,
-      stmlib::ParameterInterpolator* speed_modulation,
-      stmlib::ParameterInterpolator* bandwidth_modulation,
-      FloatFrame* mix,
-      float* bandwidth,
-      size_t size) {
-    return multitap_delay_.RenderTapsBlock(
-        &DelayLineType::ReadHermiteBlockOf, delay_line,
-        DelayLineType::MAX_DELAY, delay_line->write_ptr(), taps, freeze,
-        speed_modulation, bandwidth_modulation, mix, bandwidth, size);
-  }
-
-  // Lich port: the taps of one sample, after its Write(): as Render().
-  template<typename DelayLineType>
-  __attribute__((noinline)) void RenderTapsSample(
-      const DelayLineType* delay_line,
-      const DelayController::Output* taps,
-      float speed,
-      float bandwidth,
-      FloatFrame* out) {
-    FloatFrame mix;
-    const int write_ptr = delay_line->write_ptr();
-    multitap_delay_.RenderBlock(
-        &DelayLineType::ReadHermiteBlockOf, delay_line, taps, &speed,
-        &write_ptr, &mix, 1);
-    multitap_delay_.Finish(mix, bandwidth, out);
   }
       
   // Lich port: renders the grains of a block before the block is written.

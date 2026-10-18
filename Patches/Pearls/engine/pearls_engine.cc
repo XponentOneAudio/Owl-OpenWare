@@ -24,6 +24,7 @@
 // MonitorStateChange()) and the seed button logic of beads/ui.cc.
 
 #include "engine/pearls_engine.h"
+#include "engine/pearls_profile.h"
 
 #include <algorithm>
 #include <cmath>
@@ -892,6 +893,7 @@ void Engine::ProcessAudio32kStreaming(
 }
 
 void Engine::RenderBlock() {
+  PEARLS_PROFILE_START(engine_start);
   UpdateConfiguration();
   UpdatePitch();
 
@@ -1023,6 +1025,11 @@ void Engine::RenderBlock() {
       ? 1.0f
       : processor_->overwrite_reserve();
   status_.vu_meter = gain_control_.vu_meter();
+  PEARLS_PROFILE_ADD(PEARLS_PROFILE_ENGINE, engine_start);
 }
 
 }  // namespace pearls
+
+#ifdef PEARLS_PROFILE
+PearlsProfile pearls_profile;
+#endif  // PEARLS_PROFILE

@@ -13,6 +13,12 @@
 
 #include "Patch.h"
 #include "message.h"
+// The engine is built with PEARLS_PROFILE (owl/lich_config.h, which this
+// file does not include): the same here.
+#if defined(__arm__) && !defined(PEARLS_NO_PROFILE)
+#define PEARLS_PROFILE
+#endif
+#include "engine/pearls_profile.h"
 #include "lich/lich_pearls.h"
 
 class PearlsPatch : public Patch {
@@ -139,8 +145,11 @@ class PearlsPatch : public Patch {
     int random_x10, sequential_x10, copy_x10, fma_x10;
   };
 
+  // The buffers' contents are hidden from the compiler (the asm), so that
+  // it cannot work out the sums without reading.
   static __attribute__((noinline)) uint32_t ReadRandom(
       const uint32_t* p, int shift, int n) {
+    __asm__ volatile("" : "+r"(p) : : "memory");
     uint32_t x = 1;
     uint32_t sum = 0;
     for (int i = 0; i < n; ++i) {
@@ -152,6 +161,7 @@ class PearlsPatch : public Patch {
 
   static __attribute__((noinline)) uint32_t ReadSequential(
       const uint32_t* p, uint32_t mask, int n) {
+    __asm__ volatile("" : "+r"(p) : : "memory");
     uint32_t sum = 0;
     for (int i = 0; i < n; ++i) {
       sum += p[uint32_t(i) & mask];
@@ -160,8 +170,10 @@ class PearlsPatch : public Patch {
   }
 
   static __attribute__((noinline)) float Fma(float a, int n) {
-    const float b = 0.9999f;
-    const float c = 0.0001f;
+    volatile float vb = 0.9999f;
+    volatile float vc = 0.0001f;
+    const float b = vb;
+    const float c = vc;
     for (int i = 0; i < n; ++i) {
       a = a * b + c;
       a = a * b + c;
@@ -191,8 +203,8 @@ class PearlsPatch : public Patch {
     uint32_t* ccm = static_cast<uint32_t*>(malloc(kCcmWords * 4));
     uint32_t* ext = static_cast<uint32_t*>(malloc(kExtWords * 4));
     if (ccm && ext) {
-      memset(ccm, 0, kCcmWords * 4);
-      memset(ext, 0, kExtWords * 4);
+      for (int i = 0; i < kCcmWords; ++i) ccm[i] = uint32_t(i) * 2654435761u;
+      for (int i = 0; i < kExtWords; ++i) ext[i] = uint32_t(i) * 2654435761u;
       volatile uint32_t sink = 0;
       const int random_ext = Cycles([&] { sink = ReadRandom(ext, 17, kN); });
       const int random_ccm = Cycles([&] { sink = ReadRandom(ccm, 22, kN); });
@@ -240,13 +252,6 @@ class PearlsPatch : public Patch {
     return p;
   }
 
-  static __attribute__((noinline, optimize("Os"))) char* AppendTenths(
-      char* p, int v_x10) {
-    p = AppendInt(p, v_x10 / 10);
-    *p++ = '.';
-    return AppendInt(p, (v_x10 < 0 ? -v_x10 : v_x10) % 10);
-  }
-
   // Twice a second: the calibration, and the load (average and peak, in
   // percent) and grain limit since the last report.
   __attribute__((noinline, optimize("Os"))) void Report(
@@ -256,20 +261,35 @@ class PearlsPatch : public Patch {
     if (++report_blocks_ * size < int(getSampleRate()) / 2) {
       return;
     }
+    // Cycles per access (r, s, c), per loop (f); percent of the block
+    // budget, averaged: the delay controller or grain triggers (dc), the
+    // grains or delay taps (gp), the reverb (rv), the whole processor (pr),
+    // the whole engine (en); the load, average and peak; the grain limit.
     char* p = message_;
-    p = Append(p, "rnd ");
-    p = AppendTenths(p, calibration_.random_x10);
-    p = Append(p, " seq ");
-    p = AppendTenths(p, calibration_.sequential_x10);
-    p = Append(p, " cpy ");
-    p = AppendTenths(p, calibration_.copy_x10);
-    p = Append(p, " fma ");
-    p = AppendTenths(p, calibration_.fma_x10);
-    p = Append(p, " cpu ");
+    p = Append(p, "r");
+    p = AppendInt(p, calibration_.random_x10 / 10);
+    p = Append(p, " s");
+    p = AppendInt(p, calibration_.sequential_x10 / 10);
+    p = Append(p, " c");
+    p = AppendInt(p, calibration_.copy_x10 / 10);
+    p = Append(p, " f");
+    p = AppendInt(p, calibration_.fma_x10 / 10);
+#ifdef PEARLS_PROFILE
+    static const char* const kSlotNames[PEARLS_PROFILE_NUM_SLOTS] = {
+      " dc", " gp", " rv", " pr", " en"
+    };
+    const float budget = cycles_per_block_ * float(report_blocks_);
+    for (int i = 0; i < PEARLS_PROFILE_NUM_SLOTS; ++i) {
+      p = Append(p, kSlotNames[i]);
+      p = AppendInt(p, int(100.0f * float(pearls_profile.cycles[i]) / budget));
+      pearls_profile.cycles[i] = 0;
+    }
+#endif  // PEARLS_PROFILE
+    p = Append(p, " cpu");
     p = AppendInt(p, int(100.0f * load_sum_ / float(report_blocks_)));
     *p++ = '/';
     p = AppendInt(p, int(100.0f * load_peak_));
-    p = Append(p, " g ");
+    p = Append(p, " g");
     p = AppendInt(p, pearls_.ui_state().max_grains);
     *p = '\0';
     debugMessage(message_);

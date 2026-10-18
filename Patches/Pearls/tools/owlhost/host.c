@@ -140,6 +140,10 @@ static void onProgramReady(void) {
              (unsigned long)stack_used(),
              (unsigned long)pv->heap_bytes_used);
       out_energy = out_peak = 0;
+      if (pv->message) {
+        printf("  message \"%s\"\n", pv->message);
+        pv->message = NULL;
+      }
     }
     if (seconds == run_seconds) {
       printf("ok\n");
