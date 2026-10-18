@@ -24,28 +24,54 @@ MAX_RESOURCE = 1024 * 1024 - 256  # OpenWare: MAX_SYSEX_PAYLOAD_SIZE, with a mar
 
 
 def read_wav(path):
-    """Frames as lists of floats per channel, and the sample rate."""
-    w = wave.open(path, 'rb')
-    channels, width, rate, n = (w.getnchannels(), w.getsampwidth(),
-                                w.getframerate(), w.getnframes())
-    raw = w.readframes(n)
-    w.close()
-    count = len(raw) // width
-    if width == 1:
-        values = [(b - 128) / 128.0 for b in raw]
-    elif width == 2:
-        values = [v / 32768.0 for v in struct.unpack('<%dh' % count, raw)]
-    elif width == 3:
-        values = []
-        for i in range(0, len(raw), 3):
-            v = int.from_bytes(raw[i:i + 3], 'little', signed=True)
-            values.append(v / 8388608.0)
-    elif width == 4:
+    """Frames as lists of floats per channel, and the sample rate. Reads PCM
+    (8, 16, 24, 32 bits) and floating point (32, 64 bits) WAV files,
+    including WAVE_FORMAT_EXTENSIBLE ones."""
+    data = open(path, 'rb').read()
+    if data[:4] != b'RIFF' or data[8:12] != b'WAVE':
+        raise ValueError('%s is not a WAV file' % path)
+    pos = 12
+    fmt = None
+    samples = None
+    while pos + 8 <= len(data):
+        cid = data[pos:pos + 4]
+        size = struct.unpack('<I', data[pos + 4:pos + 8])[0]
+        body = data[pos + 8:pos + 8 + size]
+        if cid == b'fmt ':
+            tag, channels, rate = struct.unpack('<HHI', body[:8])
+            bits = struct.unpack('<H', body[14:16])[0]
+            if tag == 0xfffe and len(body) >= 26:
+                tag = struct.unpack('<H', body[24:26])[0]
+            fmt = (tag, channels, rate, bits)
+        elif cid == b'data':
+            samples = body
+            break
+        pos += 8 + size + (size & 1)
+    if not fmt or samples is None:
+        raise ValueError('%s: no format or data chunk' % path)
+    tag, channels, rate, bits = fmt
+    width = bits // 8
+    count = len(samples) // width
+    samples = samples[:count * width]
+    if tag == 3 and bits == 32:
+        values = list(struct.unpack('<%df' % count, samples))
+    elif tag == 3 and bits == 64:
+        values = list(struct.unpack('<%dd' % count, samples))
+    elif tag == 1 and bits == 8:
+        values = [(b - 128) / 128.0 for b in samples]
+    elif tag == 1 and bits == 16:
+        values = [v / 32768.0 for v in struct.unpack('<%dh' % count, samples)]
+    elif tag == 1 and bits == 24:
+        values = [int.from_bytes(samples[i:i + 3], 'little', signed=True)
+                  / 8388608.0 for i in range(0, len(samples), 3)]
+    elif tag == 1 and bits == 32:
         values = [v / 2147483648.0
-                  for v in struct.unpack('<%di' % count, raw)]
+                  for v in struct.unpack('<%di' % count, samples)]
     else:
-        raise ValueError('unsupported sample width %d' % width)
-    return [values[c::channels] for c in range(channels)], rate
+        raise ValueError('%s: unsupported WAV encoding (format %d, %d bits)'
+                         % (path, tag, bits))
+    frames = len(values) // channels
+    return [values[c:frames * channels:channels] for c in range(channels)], rate
 
 
 def resample(x, src, dst):

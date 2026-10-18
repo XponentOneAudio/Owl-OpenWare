@@ -184,7 +184,14 @@ named `pearls-1.wav` to `pearls-8.wav`. Make the SysEx with:
     python3 tools/make_sample_syx.py my-sound.wav 3 pearls-3.syx
     python3 tools/make_sample_syx.py my-sound.wav 4 pearls-4.syx --mono --rate 24000
 
-- The tool converts any WAV file to 16 bits.
+- The WAV files can be anywhere: give the tool their paths. The slot number
+  (1 to 8) sets the name the sample is stored under, `pearls-N.wav`. Sending
+  a file for a slot again replaces that sample.
+- Only Python 3 is needed, no toolchain.
+- The tool reads 8, 16, 24 and 32-bit and floating-point WAV files, and
+  converts them to 16 bits.
+- Send each `.syx` file to the Lich as for the patch. Then choose the slot
+  on page 4, knob D.
 - OpenWare resources are at most 1 MB, so the file is cut to fit: about 5 s
   of 48 kHz stereo, or 21 s of 24 kHz mono.
 - The buffer itself holds 4 s in hi-fi stereo and up to 32 s in scorched
