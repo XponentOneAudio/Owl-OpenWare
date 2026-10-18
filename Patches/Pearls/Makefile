@@ -24,7 +24,7 @@ DSP_SRC = third_party/eurorack/beads/dsp/processor.cc third_party/eurorack/beads
 	third_party/eurorack/stmlib/utils/random.cc third_party/eurorack/stmlib/dsp/units.cc \
 	engine/pearls_engine.cc engine/gain_control.cc lich/lich_pearls.cc lich/wav_reader.cc
 
-.PHONY: test lich_test check patch sysex size resource m4 syx prebuilt
+.PHONY: test lich_test check patch sysex size resource m4 syx prebuilt hosttest
 SLOT ?= 1
 test: lich_test check
 
@@ -63,6 +63,10 @@ resource:
 
 m4:
 	$(MAKE) -C tools/m4sim run
+
+# Runs the patch binary itself under QEMU, with a stand-in for the firmware.
+hosttest: patch
+	TOOLROOT=$(TOOLROOT) tools/owlhost/run.sh $(abspath $(BUILD))/owl/patch.bin
 
 syx: patch resource $(BUILD)/check_sysex
 	python3 tools/make_sysex.py $(BUILD)/owl/patch.bin $(BUILD)/pearls-lich.syx

@@ -335,6 +335,7 @@ The governor watches the busiest recent blocks, not the average.
 | `tools/patch_test.cc`, `tools/owl_mock/` | tests of the OWL patch against a stand-in for OwlProgram |
 | `tools/check_block_rendering.sh` | the DSP changes against unmodified Beads |
 | `tools/m4sim/` | the Cortex-M4 CPU estimates (QEMU plugin and benchmark) |
+| `tools/owlhost/` | runs the patch binary under QEMU with a stand-in for the firmware (`make hosttest`): catches faults, reports stack and heap |
 | `tools/reverb_compare.*` | the 24 kHz reverb against Beads' |
 | `tools/make_sysex.py`, `make_sample_syx.py`, `make_wavetable_resource.py`, `check_sysex.c`, `send_sysex.py` | SysEx and resources |
 | `prebuilt/` | the SysEx files and `BUILD_INFO.txt` |

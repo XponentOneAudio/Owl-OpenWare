@@ -17,8 +17,10 @@ TOOLROOT ?=
 ROOT := $(abspath ..)
 STAGE := $(ROOT)/build/owl-src
 BUILDDIR := $(ROOT)/build/owl
+# OwlProgram's owl2.ld, fixed: see owl2-pearls.ld.
+LDSCRIPT ?= $(abspath owl2-pearls.ld)
 OWL_ARGS = -C $(OWLPROGRAM) PLATFORM=OWL2 PATCHNAME=Pearls PATCHSOURCE=$(STAGE) \
-	BUILD=$(BUILDDIR) TOOLROOT=$(TOOLROOT) $(if $(LDSCRIPT),LDSCRIPT=$(LDSCRIPT))
+	BUILD=$(BUILDDIR) TOOLROOT=$(TOOLROOT) LDSCRIPT=$(LDSCRIPT)
 
 .PHONY: all stage patch sysex load store size clean
 all: patch
