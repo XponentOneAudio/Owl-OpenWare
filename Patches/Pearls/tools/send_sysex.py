@@ -14,15 +14,20 @@ they can hold the ports.
 
   python send_sysex.py --list                     the MIDI ports
   python send_sysex.py --info                     what the Lich reports
+  python send_sysex.py --erase 1                  deletes the patch in slot 1
   python send_sysex.py pearls-lich.syx            to the first "OWL" port
   python send_sysex.py pearls-waves.syx --port OWL --delay 20
 """
 
 import argparse
 import collections
+import os
 import struct
 import sys
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import make_sysex  # noqa: E402
 
 MANUFACTURER = 0x7d
 REQUEST_SETTINGS = 67  # CC: the Lich answers with SysEx
@@ -30,6 +35,7 @@ FIRMWARE_UPLOAD = 0x10
 FIRMWARE_STORE = 0x11
 FIRMWARE_RUN = 0x12
 FIRMWARE_SAVE = 0x17
+FLASH_ERASE = 0x14
 PRESET_NAME = 0x01
 RESOURCE_NAME = 0x04
 FIRMWARE_VERSION = 0x20
@@ -379,12 +385,14 @@ def main():
                         help='list the MIDI ports')
     parser.add_argument('--info', action='store_true',
                         help='ask the Lich for its status')
+    parser.add_argument('--erase', type=int, metavar='SLOT',
+                        help='delete the patch stored in a slot')
     args = parser.parse_args()
 
     midi = WinMidi() if sys.platform == 'win32' else MidoMidi()
     outputs = midi.output_names()
     inputs = midi.input_names()
-    if args.list or not (args.file or args.info):
+    if args.list or not (args.file or args.info or args.erase):
         print('MIDI output ports:')
         for n in outputs:
             print('  ' + n)
@@ -396,7 +404,12 @@ def main():
     in_index = find_port(inputs, args.port, 'input')
 
     messages = []
-    if args.file:
+    if args.erase:
+        if args.file or args.info:
+            sys.exit('--erase goes alone')
+        messages = [make_sysex.message(FLASH_ERASE,
+                                       make_sysex.encode_int(args.erase))]
+    elif args.file:
         messages = split_messages(open(args.file, 'rb').read())
         if not messages:
             sys.exit('%s holds no SysEx messages' % args.file)
@@ -416,6 +429,8 @@ def main():
             return
         print('sending %d messages to %s' % (len(messages), outputs[out_index]))
         last = messages[-1][3] if len(messages[-1]) > 3 else None
+        if last == FLASH_ERASE:
+            print('deleting the patch in slot %d' % args.erase)
         for n, m in enumerate(messages):
             midi.send(m)
             time.sleep(args.delay / 1000.0)
@@ -434,7 +449,7 @@ def main():
                     sys.exit(1)
         print()
         # STORE and SAVE write the flash, then restart the patch.
-        if last in (FIRMWARE_STORE, FIRMWARE_SAVE):
+        if last in (FIRMWARE_STORE, FIRMWARE_SAVE, FLASH_ERASE):
             print('writing the flash...')
             time.sleep(3.0)
         else:

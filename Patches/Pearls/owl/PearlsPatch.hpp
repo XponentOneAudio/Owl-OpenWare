@@ -42,6 +42,8 @@ class PearlsPatch : public Patch {
     }
     ok_ = pearls_.Init(getSampleRate());
     cycles_per_block_ = 0.0f;
+    overloaded_blocks_ = 0;
+    skip_block_ = false;
   }
 
   ~PearlsPatch() {
@@ -69,8 +71,10 @@ class PearlsPatch : public Patch {
     const int size = buffer.getSize();
     float* l = buffer.getSamples(LEFT_CHANNEL);
     float* r = buffer.getSamples(RIGHT_CHANNEL);
-    if (!ok_) {
+    if (!ok_ || skip_block_) {
+      // Overload guard (below): a block of silence that costs nothing.
       buffer.clear();
+      skip_block_ = false;
       return;
     }
     pearls::lich::Inputs in;
@@ -102,7 +106,19 @@ class PearlsPatch : public Patch {
     if (cycles_per_block_ == 0.0f) {
       cycles_per_block_ = float(size) * 180e6f / getSampleRate();
     }
-    pearls_.ReportLoad(float(getElapsedCycles()) / cycles_per_block_);
+    const float load = float(getElapsedCycles()) / cycles_per_block_;
+    pearls_.ReportLoad(load);
+
+    // Overload guard: a patch that never finishes its blocks in time
+    // starves the firmware's lower priority tasks, its watchdog resets the
+    // module, and the firmware then refuses to start the patch (E). After
+    // a run of late blocks, skip one: the firmware catches up while the
+    // governor sheds grains.
+    overloaded_blocks_ = load > 1.0f ? overloaded_blocks_ + 1 : 0;
+    if (overloaded_blocks_ >= kOverloadBlocks) {
+      overloaded_blocks_ = 0;
+      skip_block_ = true;
+    }
   }
 
  private:
@@ -178,6 +194,9 @@ class PearlsPatch : public Patch {
   int gate_;
   bool ok_;
   float cycles_per_block_;
+  static const int kOverloadBlocks = 16;
+  int overloaded_blocks_;
+  bool skip_block_;
 };
 
 #endif  // __PearlsPatch_hpp__

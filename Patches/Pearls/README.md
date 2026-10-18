@@ -96,6 +96,15 @@ MIDI-OX and the OWL web page first: on Windows they can hold the ports.
 | Memory overflow, malloc failed | The patch ran out of memory: send `--info` output |
 | No free resources, Write failed, Data mismatch | The flash is full or failing |
 | Invalid STORE/SAVE command | The transfer before it failed |
+| Preventing reset program from starting | The patch crashed or overloaded the module, the watchdog reset it, and the firmware won't start that patch again |
+
+If the stored patch keeps showing E, even after switching off and on or
+pressing the encoder, delete it: `python tools/send_sysex.py --erase 1`
+(for slot 1). Then try it from RAM with `pearls-lich.syx`, which a
+reset forgets, and run `--info` while it plays to see its CPU use.
+
+The patch guards against overload: after 16 late blocks in a row it
+skips one (a short dropout), so that the firmware keeps running.
 
 ## Panel
 
