@@ -339,6 +339,8 @@ class DelayController {
   int control_countdown_;
   float ramp_gain_[NUM_TAPS];
   float ramp_step_[NUM_TAPS];
+  int32_t ramp_delay_[NUM_TAPS];
+  int32_t ramp_delay_step_[NUM_TAPS];
 #endif  // BEADS_DELAY_CONTROL_RATE
   
   RandomWalkModulation position_modulation_;

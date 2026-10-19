@@ -110,9 +110,12 @@ Different output, selected by the Lich build (`owl/lich_config.h`):
   (`noinline`), and the block code is shared by the 8 delay line types,
   for the patch to fit in the Lich's 144 kB.
 - `delay_controller.{h,cc}`: with `BEADS_DELAY_CONTROL_RATE` (4 on the
-  Lich), the taps are worked out every 4 samples; in between each tap's
-  gain ramps to its value at the next update (the envelopes are straight
-  lines in their phase: the ramps follow them except across a corner).
+  Lich), the taps are worked out every 4 samples, and each tap's delay
+  and gain ramp to the values worked out over the next 4 samples (one
+  update late): the delays glide as Beads' do while the clock's interval
+  changes (DENSITY, TIME), where held delays would click every update;
+  the gain ramps follow the envelopes, straight lines in their phase,
+  except across a corner.
   The clock runs every sample; a retrig or a freeze change updates at
   once. The difference is 62 to 75 dB below the signal over the delay
   scenarios. The other caches (ratios, interval, shape, delays, gains)
