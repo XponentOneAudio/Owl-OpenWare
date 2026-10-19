@@ -294,9 +294,9 @@ report):
 Before the hi-fi processor ran through the SRAM1 alias, the same settings
 measured 47% and 105% (and delay mode overloaded, with harsh noise). The
 other qualities, which then didn't, measured 115% to 146% in delay mode.
-Through it, sunny tape and scorched cassette measure 79%, and cold digital
-95% (its 48 <-> 32 kHz resampler alone 39%: since rewritten in 16 bits,
-55% fewer cycles on the model).
+Through it, in delay mode, sunny tape and scorched cassette measure 79%,
+and cold digital 81% (busiest block 84%), its 48 <-> 32 kHz resampler in
+16 bits taking 25% (39% in floating point).
 
 The estimates below were made with `tools/m4sim`, a QEMU Cortex-M4 with the Lich's memory
 timings, as a share of a 180 MHz CPU. These are estimates, not
