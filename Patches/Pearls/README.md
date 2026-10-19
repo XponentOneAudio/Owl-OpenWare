@@ -79,6 +79,11 @@ messages, which must not be sent too fast:
 - **Others:** SysEx Librarian (macOS) and `amidi -p hw:1,0,0 -s file.syx`
   (Linux) also work. Add a delay between messages if the transfer fails.
 
+`prebuilt/pearls-lich-exact-delay.syx` is a test build whose delay mode
+works out its taps every sample and reads them with Hermite
+interpolation, as Beads does (more CPU), to compare by ear with the
+normal build (`PEARLS_CPPFLAGS=-DPEARLS_EXACT_DELAY`).
+
 1. **`pearls-waves.syx`** (once). It stores the wavetables of the synth
    mode in the Lich's flash, as a 100 kB resource named `pearls-waves`.
    They don't fit in the patch. Without them, everything but the synth mode

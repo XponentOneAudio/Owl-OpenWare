@@ -25,10 +25,13 @@
 // Code run once or rarely (setup, configuration, sample loading), compiled
 // for size so that the patch fits in its 144 kB.
 #define PEARLS_COLD __attribute__((noinline, optimize("Os")))
-// Delay mode: the taps worked out every 4 samples (ramps in between).
+// Delay mode: the taps worked out every 4 samples (ramps in between), and
+// read with linear interpolation (fine by ear, cheaper).
+// PEARLS_EXACT_DELAY: as Beads (every sample, Hermite), for comparisons.
+#ifndef PEARLS_EXACT_DELAY
 #define BEADS_DELAY_CONTROL_RATE 4
-// Delay taps with linear interpolation (fine by ear, cheaper).
 #define BEADS_DELAY_TAPS_LINEAR
+#endif
 // Cold digital's 48 <-> 32 kHz resampler in 16 bits (Q15, SMLAD).
 #define PEARLS_RESAMPLER_Q15
 // Cycle counts of parts of the engine (engine/pearls_profile.h).
