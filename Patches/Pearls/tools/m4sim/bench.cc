@@ -74,6 +74,7 @@ struct Config {
   float size;
   bool freeze;
   float pitch;
+  float time;  // 0: the default
 };
 
 static void Run(int phase, const Config& cfg) {
@@ -94,6 +95,7 @@ static void Run(int phase, const Config& cfg) {
   c.time_random = c.size_random = c.shape_random = c.pitch_random =
       cfg.randomness;
   c.pitch = cfg.pitch;
+  if (cfg.time != 0.0f) c.time = cfg.time;
   c.feedback = 0.5f;
   c.dry_wet = 0.8f;
 #ifdef REVERB
@@ -163,6 +165,10 @@ int main() {
     { "cold delay at noon", QUALITY_VINTAGE_DIGITAL, false, true, false, 0.5f, 0.0f, 0.5f, false, 0.0f },
     { "sunny delay at noon", QUALITY_CLEAN_TAPE, false, true, false, 0.5f, 0.0f, 0.5f, false, 0.0f },
     { "scorched delay at noon", QUALITY_DIRTY_TAPE, false, true, false, 0.5f, 0.0f, 0.5f, false, 0.0f },
+    // TIME mid cross-fade (multiplier 8.5: both taps of each pair) and on
+    // a multiple (9: one).
+    { "hifi delay time 0.5", QUALITY_DIGITAL, false, true, false, 0.5f, 0.0f, 0.5f, false, 0.0f, 0.5f },
+    { "hifi delay time 8/15", QUALITY_DIGITAL, false, true, false, 0.5f, 0.0f, 0.5f, false, 0.0f, 8.0f / 15.0f },
   };
   const char* only = NULL;
   (void)only;

@@ -16,6 +16,8 @@ enum PearlsProfileSlot {
   PEARLS_PROFILE_REVERB,
   PEARLS_PROFILE_PROCESSOR,   // all of beads::Processor::Process
   PEARLS_PROFILE_ENGINE,      // all of pearls::Engine::RenderBlock
+  PEARLS_PROFILE_TAPS,        // delay mode's taps (MultitapDelay::Render)
+  PEARLS_PROFILE_WRITE,       // the feedback, limiter and delay line write
   PEARLS_PROFILE_NUM_SLOTS
 };
 

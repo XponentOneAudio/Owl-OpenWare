@@ -340,7 +340,7 @@ class PearlsPatch : public Patch {
     p = AppendInt(p, calibration_.int_alias_x10 / 10);
 #ifdef PEARLS_PROFILE
     static const char* const kSlotNames[PEARLS_PROFILE_NUM_SLOTS] = {
-      " dc", " gp", " rv", " pr", " en"
+      " dc", " gp", " rv", " pr", " en", " mt", " wr"
     };
     const float budget = cycles_per_block_ * float(report_blocks_);
     for (int i = 0; i < PEARLS_PROFILE_NUM_SLOTS; ++i) {

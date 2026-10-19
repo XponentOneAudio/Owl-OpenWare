@@ -138,7 +138,9 @@ a second, for instance `m20/12 i12/7 dc18 gp64 rv0 pr90 en98 cpu106/109 g4`:
   whether the patch's code would run faster there.
 - Percent of the CPU time: `dc` the delay controller (or the grain
   triggers), `gp` the grains or delay taps and the delay line, `rv` the
-  reverb, `pr` all of the Beads processor, `en` all of the engine; `cpu`
+  reverb, `pr` all of the Beads processor, `en` all of the engine, `mt`
+  delay mode's taps (part of `gp`), `wr` the feedback and delay line
+  write (part of `gp`); `cpu`
   the whole patch, average and busiest block; `g` the governor's grain
   limit.
 

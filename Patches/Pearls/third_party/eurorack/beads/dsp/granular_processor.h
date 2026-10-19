@@ -38,6 +38,7 @@
 #include "beads/dsp/limiter.h"
 #include "beads/dsp/multitap_delay.h"
 #include "beads/dsp/sample_rate_conversion_filters.h"
+#include "engine/pearls_profile.h"  // Lich port
 
 namespace beads {
 
@@ -353,6 +354,7 @@ class GranularProcessor {
 #endif  // BEADS_PER_SAMPLE_GRAINS
 
     while (size--) {
+      PEARLS_PROFILE_START(write_start);  // Lich port
       const float feedback = feedback_modulation.Next();
       FloatFrame input = *in;
       FloatFrame s = input;
@@ -378,6 +380,7 @@ class GranularProcessor {
       }
       if (mono) {
         mono_delay_line_.Write(s, *freeze);
+        PEARLS_PROFILE_ADD(PEARLS_PROFILE_WRITE, write_start);
         if (triggers && !grains_rendered) {
           granular_player_.Render(
               &mono_delay_line_,
@@ -386,15 +389,18 @@ class GranularProcessor {
               out);
         }
         if (taps) {
+          PEARLS_PROFILE_START(taps_start);
           multitap_delay_.Render(
               &mono_delay_line_,
               *taps,
               speed_modulation.Next(),
               bandwidth_modulation.Next(),
               out);
+          PEARLS_PROFILE_ADD(PEARLS_PROFILE_TAPS, taps_start);
         }
       } else {
         stereo_delay_line_.Write(s, *freeze);
+        PEARLS_PROFILE_ADD(PEARLS_PROFILE_WRITE, write_start);
         if (triggers && !grains_rendered) {
           granular_player_.Render(
               &stereo_delay_line_,
@@ -403,12 +409,14 @@ class GranularProcessor {
               out);
         }
         if (taps) {
+          PEARLS_PROFILE_START(taps_start);
           multitap_delay_.Render(
               &stereo_delay_line_,
               *taps,
               speed_modulation.Next(),
               bandwidth_modulation.Next(),
               out);
+          PEARLS_PROFILE_ADD(PEARLS_PROFILE_TAPS, taps_start);
         }
       }
       
