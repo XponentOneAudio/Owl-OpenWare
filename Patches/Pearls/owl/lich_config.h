@@ -29,6 +29,8 @@
 #define BEADS_DELAY_CONTROL_RATE 4
 // Delay taps with linear interpolation (fine by ear, cheaper).
 #define BEADS_DELAY_TAPS_LINEAR
+// Cold digital's 48 <-> 32 kHz resampler in 16 bits (Q15, SMLAD).
+#define PEARLS_RESAMPLER_Q15
 // Cycle counts of parts of the engine (engine/pearls_profile.h).
 #if defined(__arm__) && !defined(PEARLS_NO_PROFILE)
 #define PEARLS_PROFILE

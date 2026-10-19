@@ -295,8 +295,8 @@ Before the hi-fi processor ran through the SRAM1 alias, the same settings
 measured 47% and 105% (and delay mode overloaded, with harsh noise). The
 other qualities, which then didn't, measured 115% to 146% in delay mode.
 Through it, sunny tape and scorched cassette measure 79%, and cold digital
-95% (its 48 <-> 32 kHz resampler alone 39%: since rewritten, about 40%
-fewer cycles on the model).
+95% (its 48 <-> 32 kHz resampler alone 39%: since rewritten in 16 bits,
+55% fewer cycles on the model).
 
 The estimates below were made with `tools/m4sim`, a QEMU Cortex-M4 with the Lich's memory
 timings, as a share of a 180 MHz CPU. These are estimates, not
@@ -340,8 +340,10 @@ The governor watches the busiest recent blocks, not the average.
   -60 dBFS for 2 s) as unpatched.
 - **Sample rate:** the codec stays at 48 kHz. Scorched cassette uses Beads'
   48 kHz + 2:1 resampling path. Cold digital runs at 32 kHz through a
-  96-tap polyphase resampler (192 taps on the Nebulae), whose dot
-  products are in assembly on the Lich.
+  96-tap polyphase resampler (192 taps on the Nebulae), in 16 bits on the
+  Lich (the samples with 6 dB of headroom, two multiply-adds per
+  instruction): 84 dB below full scale from the floating point version,
+  under cold digital's own 12-bit quantisation.
 - **Gate timing:** buttons and gates are read once per audio block (0.7 ms
   with OpenWare's default 32-frame blocks).
 - **Control rate:** the engine works in 32-frame blocks (1.5 kHz) instead
